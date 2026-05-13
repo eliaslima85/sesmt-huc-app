@@ -18,15 +18,25 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- BANCO DE DADOS ---
+# --- BANCO DE DADOS COM AUTO-MIGRAÇÃO ---
 def conectar(): return sqlite3.connect('gestao_epi_sesmt.db', check_same_thread=False)
 conn = conectar()
 c = conn.cursor()
 
+# Criação das tabelas base
 c.execute('CREATE TABLE IF NOT EXISTS funcionarios (id INTEGER PRIMARY KEY, nome TEXT, matricula TEXT UNIQUE, setor TEXT, funcao TEXT, admissao TEXT, turno TEXT, vinculo TEXT, whatsapp TEXT)')
 c.execute('CREATE TABLE IF NOT EXISTS epis (id INTEGER PRIMARY KEY, nome TEXT, ca TEXT)')
 c.execute('CREATE TABLE IF NOT EXISTS entregas (id INTEGER PRIMARY KEY, id_func INTEGER, id_epi INTEGER, data TEXT, token TEXT, status TEXT DEFAULT "Pendente ⏳")')
-c.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, senha TEXT, url_sistema TEXT)')
+c.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, senha TEXT)')
+
+# --- MÁGICA DA ENGENHARIA: Atualiza a tabela se ela for antiga ---
+try:
+    c.execute('ALTER TABLE config ADD COLUMN url_sistema TEXT')
+    conn.commit()
+except:
+    pass # Se der erro, é porque a coluna já existe. Vida que segue!
+
+# Garante que existe uma senha padrão e uma URL inicial
 c.execute("INSERT OR IGNORE INTO config (id, senha, url_sistema) VALUES (1, '1234', 'http://localhost:8501')")
 conn.commit()
 
@@ -35,7 +45,7 @@ def colorir_status(val):
     color = 'red' if 'Pendente' in val else 'green'
     return f'color: {color}; font-weight: bold'
 
-# --- TRATAMENTO DE TEXTO PARA O PDF (Remove emojis e caracteres especiais) ---
+# --- TRATAMENTO DE TEXTO PARA O PDF ---
 def limpar_texto(texto):
     texto_string = str(texto).replace("✅", "").replace("⏳", "").replace("🛡️", "").strip()
     return texto_string.encode('latin-1', 'replace').decode('latin-1')
@@ -64,7 +74,7 @@ if not st.session_state.logado:
             else: st.error("Senha Incorreta")
     st.stop()
 
-# --- FUNÇÕES DE PDF (Com Tratamento de Texto) ---
+# --- FUNÇÕES DE PDF ---
 def gerar_pdf_ficha(dados_f, df, titulo):
     pdf = FPDF()
     pdf.add_page()
