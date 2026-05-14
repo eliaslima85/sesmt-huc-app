@@ -8,7 +8,7 @@ import urllib.parse
 from fpdf import FPDF
 
 # --- CREDENCIAIS SUPABASE ---
-SUPABASE_URL = "aatkjhtrafuepwzzlrbm"
+SUPABASE_URL = "https://aatkjhtrafuepwzzlrbm.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdGtqaHRyYWZ1ZXB3enpscmJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2Mjg5MTYsImV4cCI6MjA5NDIwNDkxNn0.65izu7Zhc3kUZrVIRXGvVQ5o-Lhk-7PCK9CMg4zIwuk"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
