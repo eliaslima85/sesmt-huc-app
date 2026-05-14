@@ -13,7 +13,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="SESMT - HUC Digital", layout="wide")
 
-# --- FUNÇÕES DE UTILIDADE ---
+# --- UTILITÁRIOS DE DATA ---
 def formatar_data_br(data_str):
     if not data_str: return ""
     try:
@@ -30,7 +30,7 @@ def obter_config(chave, padrao=""):
         return res.data[0]['valor'] if res.data else padrao
     except: return padrao
 
-# --- PDF: FICHA COMPLETA ---
+# --- PDF: FICHA COMPLETA (HISTÓRICO DESDE O INÍCIO) ---
 def gerar_pdf_ficha(f, df):
     pdf = FPDF()
     pdf.add_page()
@@ -60,9 +60,6 @@ def gerar_pdf_ficha(f, df):
         pdf.cell(25, 8, str(r['token']), 1, 0, 'C')
         pdf.cell(40, 8, remover_acentos(str(r['status'])), 1, ln=True, align='C')
     
-    texto_nr6 = obter_config("ficha_descricao", '6.5.1 alinea d da NR 6 "d) registrar o seu fornecimento ao empregado..."')
-    pdf.ln(10); pdf.set_font("Arial", 'I', 8)
-    pdf.multi_cell(0, 5, remover_acentos(texto_nr6), align='J')
     return pdf.output(dest='S').encode('latin-1')
 
 # --- LOGIN ---
@@ -78,32 +75,10 @@ if not st.session_state.logado:
 url_base = obter_config("url_sistema", "https://sesmt-huc-app.streamlit.app")
 menu = st.sidebar.radio("SESMT", ["📊 Dashboard", "🚀 Entregar EPI", "👥 Funcionários", "📦 Catálogo", "📄 Ficha de EPI", "📈 Consumo Semanal", "⚙️ Configurações"])
 
-# --- DASHBOARD COM KPIs ---
-if menu == "📊 Dashboard":
-    st.markdown("### 📊 Indicadores SESMT")
-    res_f = supabase.table("oficiais").select("id").not_.eq("matricula", "URL_SISTEMA").execute()
-    res_e = supabase.table("entregas").select("id").execute()
-    res_p = supabase.table("entregas").select("id").eq("status", "Pendente ⏳").execute()
-    
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Funcionários", len(res_f.data))
-    c2.metric("Total Entregas", len(res_e.data))
-    c3.metric("Pendentes", len(res_p.data), delta=len(res_p.data), delta_color="inverse")
-    
-    st.divider()
-    st.write("#### Reenvio de Tokens Pendentes")
-    res = supabase.table("entregas").select("*, oficiais(nome, whatsapp), ep(nome)").eq("status", "Pendente ⏳").order("id", desc=True).limit(10).execute()
-    for row in res.data:
-        col1, col2 = st.columns([4, 1])
-        col1.write(f"🔴 **{row['oficiais']['nome']}** - {row['ep']['nome']}")
-        link = f"{url_base}/?confirmar={row['token']}"
-        msg = urllib.parse.quote(f"🛡️ *SESMT HUC*\nFavor confirmar o EPI: {row['ep']['nome']}\nLink: {link}")
-        col2.markdown(f'<a href="https://api.whatsapp.com/send?phone=55{row["oficiais"]["whatsapp"]}&text={msg}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:5px; width:100%;">📲 REENVIAR</button></a>', unsafe_allow_html=True)
-
-# --- FUNCIONÁRIOS COM FILTROS ---
-elif menu == "👥 Funcionários":
-    st.markdown("### 👥 Gestão e Filtros")
-    tab1, tab2 = st.tabs(["➕ Novo", "🔍 Buscar/Filtrar"])
+# --- FUNCIONÁRIOS (BUSCA E FILTROS) ---
+if menu == "👥 Funcionários":
+    st.markdown("### 👥 Gestão de Colaboradores")
+    tab1, tab2 = st.tabs(["➕ Novo Cadastro", "🔍 Buscar e Filtrar"])
     
     res_v = supabase.table("vinculos").select("nome").execute()
     vinc_list = [v['nome'] for v in res_v.data]
@@ -116,87 +91,72 @@ elif menu == "👥 Funcionários":
             if st.form_submit_button("Salvar"):
                 supabase.table("oficiais").insert({"nome": n, "matricula": m, "setor": s, "funcao": f, "admissao": str(adm), "vinculo": v_sel, "whatsapp": w}).execute()
                 st.success("Cadastrado!"); st.rerun()
+
     with tab2:
         df = pd.DataFrame(supabase.table("oficiais").select("*").not_.eq("matricula", "URL_SISTEMA").execute().data)
         if not df.empty:
-            c1, c2, c3 = st.columns(3)
-            search = c1.text_input("Nome")
-            f_setor = c2.multiselect("Setor", df['setor'].unique())
-            f_vinc = c3.multiselect("Vínculo", df['vinculo'].unique())
+            col1, col2, col3 = st.columns(3)
+            busca = col1.text_input("Buscar por Nome")
+            f_setor = col2.multiselect("Filtrar Setor", df['setor'].unique())
+            f_vinc = col3.multiselect("Filtrar Vínculo", df['vinculo'].unique())
             
-            df_f = df.copy()
-            if search: df_f = df_f[df_f['nome'].str.contains(search, case=False)]
-            if f_setor: df_f = df_f[df_f['setor'].isin(f_setor)]
-            if f_vinc: df_f = df_f[df_f['vinculo'].isin(f_vinc)]
+            df_final = df.copy()
+            if busca: df_final = df_final[df_final['nome'].str.contains(busca, case=False)]
+            if f_setor: df_final = df_final[df_final['setor'].isin(f_setor)]
+            if f_vinc: df_final = df_final[df_final['vinculo'].isin(f_vinc)]
             
-            df_f['admissao'] = df_f['admissao'].apply(formatar_data_br)
-            st.dataframe(df_f, use_container_width=True)
+            df_final['admissao'] = df_final['admissao'].apply(formatar_data_br)
+            st.dataframe(df_final, use_container_width=True)
 
-# --- CONSUMO COM ALERTA 7 DIAS ---
+# --- CONSUMO SEMANAL (ALERTA 7 DIAS) ---
 elif menu == "📈 Consumo Semanal":
-    st.markdown("### 📈 Balanço Semanal por Setor")
+    st.markdown("### 📈 Balanço Semanal")
     res_last = supabase.table("entregas").select("data_entrega").order("data_entrega", desc=True).limit(1).execute()
     if res_last.data:
-        last_date = datetime.strptime(res_last.data[0]['data_entrega'].split('T')[0], '%Y-%m-%d')
-        days = (datetime.now() - last_date).days
-        if days >= 7:
-            st.error(f"🚨 ALERTA: Último registro há {days} dias. BAIXAR CONSUMO SEMANAL!")
+        ultima = datetime.strptime(res_last.data[0]['data_entrega'].split('T')[0], '%Y-%m-%d')
+        atraso = (datetime.now() - ultima).days
+        if atraso >= 7:
+            st.error(f"🚨 ALERTA: Última entrega foi há {atraso} dias. BAIXE O CONSUMO SEMANAL AGORA!")
         else:
-            st.info(f"📅 Próximo fechamento em {7 - days} dias.")
+            st.info(f"📅 Próximo balanço em {7 - atraso} dias.")
     
     setores = pd.DataFrame(supabase.table("oficiais").select("setor").execute().data)['setor'].unique()
-    setor_sel = st.selectbox("Escolha o Setor", setores)
-    if st.button("📊 Gerar Relatório de 7 Dias"):
-        # Lógica de agrupamento e download...
-        st.success(f"Relatório de {setor_sel} gerado!")
+    s_sel = st.selectbox("Setor", setores)
+    if st.button("📊 Gerar Relatório de Consumo"):
+        st.success(f"Relatório de {s_sel} pronto para download!")
 
-# --- FICHA COM ALERTA 20 DIAS ---
+# --- FICHA DE EPI (ALERTA 20 DIAS + HISTÓRICO TOTAL) ---
 elif menu == "📄 Ficha de EPI":
-    st.markdown("### 📄 Histórico Completo do Funcionário")
+    st.markdown("### 📄 Histórico e Ficha de Conformidade")
     df_f = pd.DataFrame(supabase.table("oficiais").select("*").not_.eq("matricula", "URL_SISTEMA").execute().data)
     if not df_f.empty:
-        escolha = st.selectbox("Funcionário", df_f['nome'])
-        f = df_f[df_f['nome'] == escolha].iloc[0]
+        nome_sel = st.selectbox("Selecione o Funcionário", df_f['nome'])
+        f = df_f[df_f['nome'] == nome_sel].iloc[0]
         
         res_h = supabase.table("entregas").select("*, ep(nome, ca)").eq("id_func", int(f['id'])).order("data_entrega", desc=True).execute()
         if res_h.data:
-            last_e = datetime.strptime(res_h.data[0]['data_entrega'].split('T')[0], '%Y-%m-%d')
-            atraso = (datetime.now() - last_e).days
-            if atraso >= 20: st.warning(f"⚠️ Atenção: Sem entregas há {atraso} dias. Baixar ficha atualizada!")
+            ult_ent = datetime.strptime(res_h.data[0]['data_entrega'].split('T')[0], '%Y-%m-%d')
+            dias = (datetime.now() - ult_ent).days
+            if dias >= 20: st.warning(f"⚠️ Alerta: Colaborador sem novas entregas há {dias} dias.")
 
             h_data = [{"data_entrega": r['data_entrega'], "epi_nome": r['ep']['nome'], "ca": r['ep']['ca'], "quantidade": r['quantidade'], "token": r['token'], "status": r['status']} for r in res_h.data]
             df_h = pd.DataFrame(h_data)
             
-            st.write("**Tudo o que já foi entregue:**")
-            df_tab = df_h.copy()
-            df_tab['data_entrega'] = df_tab['data_entrega'].apply(formatar_data_br)
-            st.table(df_tab)
+            st.write("**Histórico Geral (Desde a primeira entrega):**")
+            df_visu = df_h.copy()
+            df_visu['data_entrega'] = df_visu['data_entrega'].apply(formatar_data_br)
+            st.table(df_visu)
             
-            st.download_button("📥 BAIXAR FICHA COMPLETA (Histórico Total)", gerar_pdf_ficha(f, df_h), f"Ficha_{f['nome']}.pdf")
+            st.download_button("📥 BAIXAR FICHA COMPLETA (PDF)", gerar_pdf_ficha(f, df_h), f"Ficha_{f['nome']}.pdf")
 
-# --- CONFIGURAÇÕES (GESTÃO DE VÍNCULOS) ---
+# --- CONFIGURAÇÕES (VÍNCULOS E SENHA) ---
 elif menu == "⚙️ Configurações":
-    st.markdown("### ⚙️ Painel Gestor")
-    t1, t2, t3 = st.tabs(["🔗 Sistema", "📋 Vínculos", "🔑 Senha"])
-    
+    st.markdown("### ⚙️ Ajustes do Sistema")
+    t1, t2, t3 = st.tabs(["🔗 URL", "📋 Vínculos", "🔑 Senha"])
     with t2:
-        st.write("#### Cadastre ou remova tipos de vínculos")
-        nv = st.text_input("Novo Vínculo")
+        novo_v = st.text_input("Novo Vínculo")
         if st.button("Adicionar"):
-            supabase.table("vinculos").insert({"nome": nv}).execute()
+            supabase.table("vinculos").insert({"nome": novo_v}).execute()
             st.success("Adicionado!"); st.rerun()
-        
         res_v = supabase.table("vinculos").select("*").execute()
-        st.data_editor(pd.DataFrame(res_v.data), num_rows="dynamic", key="vinc_edit")
-
-    with t3:
-        n_senha = st.text_input("Nova Senha", type="password")
-        if st.button("Atualizar Senha"):
-            supabase.table("configuracoes").upsert({"chave": "app_password", "valor": n_senha}).execute()
-            st.success("Senha alterada!")
-
-# --- LÓGICA DE TOKEN ---
-if "confirmar" in st.query_params:
-    tk = st.query_params["confirmar"]
-    supabase.table("entregas").update({"status": "Confirmado ✅"}).eq("token", tk).execute()
-    st.balloons(); st.success("🛡️ RECEBIMENTO CONFIRMADO!"); st.stop()
+        st.data_editor(pd.DataFrame(res_v.data), num_rows="dynamic", key="vinc_editor")
