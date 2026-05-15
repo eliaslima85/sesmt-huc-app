@@ -6,8 +6,6 @@ Aplicação para gestão de Equipamentos de Proteção Individual (EPI)
 e segurança do trabalho.
 """
 
-import os
-import sys
 import logging
 import time
 import urllib.parse
@@ -15,11 +13,7 @@ from datetime import datetime
 
 import streamlit as st
 import pandas as pd
-from dotenv import load_dotenv
 from supabase import create_client, Client
-
-# Carregar variáveis de ambiente
-load_dotenv()
 
 # ============================================================================
 # CONFIGURAÇÕES
@@ -39,13 +33,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Supabase
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("❌ Erro: SUPABASE_URL e SUPABASE_KEY não configuradas!")
-    st.info("Configure as variáveis de ambiente no Streamlit Cloud ou localmente em .env")
+# Supabase (Lendo diretamente dos Segredos do Streamlit Cloud)
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+except KeyError:
+    st.error("❌ Erro: Chaves do Supabase não encontradas!")
+    st.info("Configure as chaves no painel do Streamlit Cloud em 'Settings' > 'Secrets'.")
     st.stop()
 
 try:
@@ -532,7 +526,6 @@ def show_entregar_epi():
                     
                     token = gerar_token()
                     
-                    sucesso = True
                     for epi_nome in epis_selecionados:
                         idx_epi = df_epis[df_epis['nome'] == epi_nome].index[0]
                         id_epi = df_epis.loc[idx_epi, 'id']
