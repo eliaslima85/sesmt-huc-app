@@ -1,314 +1,355 @@
--- ============================================================================
--- 🛡️ SESMT HUC v3.0 - Script SQL Completo de Instalação
--- Hospital Universitário do Ceará
--- Execute este script no SQL Editor do Supabase (uma vez só)
--- ============================================================================
+"""
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v3.0 PROFISSIONAL
+Hospital Universitário do Ceará
+"""
 
--- 1. EXTENSÕES NECESSÁRIAS
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+import logging
+import time
+import hashlib
+import urllib.parse
+import base64
+import requests
+from datetime import datetime, timedelta
+from io import BytesIO
 
--- 2. TABELA: CONFIGURAÇÕES
-CREATE TABLE IF NOT EXISTS configuracoes (
-    id SERIAL PRIMARY KEY,
-    chave TEXT UNIQUE NOT NULL,
-    valor TEXT,
-    descricao TEXT,
-    data_criacao TIMESTAMP DEFAULT NOW(),
-    data_atualizacao TIMESTAMP DEFAULT NOW()
-);
+import streamlit as st
+import pandas as pd
+import numpy as np
+from PIL import Image
+from supabase import create_client, Client
 
-INSERT INTO configuracoes (chave, valor, descricao) VALUES
-('app_password', '1234', 'Senha padrão do sistema'),
-('app_password_hash', '', 'Hash SHA-256 da senha admin'),
-('url_sistema', 'https://seusistema.streamlit.app', 'URL base para links'),
-('ficha_template', 'Recebi os equipamentos acima descritos, de acordo com a NR-6, e me comprometo a: (a) utilizá-los corretamente durante todo o período de exposição aos riscos; (b) conservá-los em bom estado; (c) comunicar imediatamente ao empregador qualquer alteração que os torne ineficazes; (d) cumprir as orientações de uso, guarda e higienização.', 'Termo de responsabilidade'),
-('lgpd_base_legal', 'Art. 11, II, "a" da LGPD - Cumprimento de obrigação legal ou regulatória (NR-6)', 'Base legal do tratamento de dados'),
-('lgpd_prazo_retencao', '5', 'Prazo de retenção de dados em anos'),
-('whatsapp_provedor', 'desativado', 'Provedor WhatsApp'),
-('whatsapp_callmebot_apikey', '', 'API Key do CallMeBot'),
-('whatsapp_meta_token', '', 'Access Token Meta'),
-('whatsapp_meta_phone_id', '', 'Phone Number ID do Meta')
-ON CONFLICT (chave) DO NOTHING;
+# ============================================================================
+# CONFIGURAÇÕES E CONEXÃO
+# ============================================================================
 
--- 3. TABELA: SETORES
-CREATE TABLE IF NOT EXISTS setores (
-    id SERIAL PRIMARY KEY,
-    nome TEXT NOT NULL UNIQUE,
-    descricao TEXT,
-    ativo BOOLEAN DEFAULT TRUE,
-    data_criacao TIMESTAMP DEFAULT NOW()
-);
+logging.basicConfig(level=logging.INFO)
+st.set_page_config(page_title="SESMT HUC - Digital", layout="wide", page_icon="🛡️")
 
-INSERT INTO setores (nome, descricao) VALUES
-('SESMT', 'Serviço Especializado em Segurança e Medicina do Trabalho'),
-('UTI', 'Unidade de Terapia Intensiva'),
-('EMERGÊNCIA', 'Pronto Atendimento / Emergência'),
-('CENTRO CIRÚRGICO', 'Bloco Cirúrgico'),
-('FARMÁCIA', 'Farmácia Hospitalar'),
-('RADIOLOGIA', 'Imagem e Diagnóstico'),
-('LABORATÓRIO', 'Análises Clínicas'),
-('ADMINISTRATIVO', 'Setor Administrativo'),
-('MANUTENÇÃO', 'Engenharia e Manutenção'),
-('LIMPEZA', 'Higienização Hospitalar'),
-('NUTRIÇÃO', 'Nutrição e Dietética'),
-('RECEPÇÃO', 'Atendimento ao Público')
-ON CONFLICT (nome) DO NOTHING;
+# Credenciais Supabase
+SUPABASE_URL = "https://aatkjhtrafuepwzzlrbm.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdGtqaHRyYWZ1ZXB3enpscmJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2Mjg5MTYsImV4cCI6MjA5NDIwNDkxNn0.65izu7Zhc3kUZrVIRXGvVQ5o-Lhk-7PCK9CMg4zIwuk"
 
--- 4. TABELA: FUNÇÕES / CARGOS (NOVA)
-CREATE TABLE IF NOT EXISTS funcoes (
-    id SERIAL PRIMARY KEY,
-    nome TEXT NOT NULL UNIQUE,
-    descricao TEXT,
-    risco TEXT DEFAULT '2 - Médio',
-    ativo BOOLEAN DEFAULT TRUE,
-    data_criacao TIMESTAMP DEFAULT NOW(),
-    data_atualizacao TIMESTAMP DEFAULT NOW()
-);
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    st.error("Erro crítico de conexão com o banco de dados.")
+    st.stop()
 
-INSERT INTO funcoes (nome, descricao, risco) VALUES
-('ENFERMEIRO(A)', 'Cuidados diretos ao paciente', '3 - Grave'),
-('TÉCNICO(A) DE ENFERMAGEM', 'Auxílio em cuidados ao paciente', '3 - Grave'),
-('MÉDICO(A)', 'Atendimento médico', '3 - Grave'),
-('FISIOTERAPEUTA', 'Reabilitação e fisioterapia', '2 - Médio'),
-('FARMACÊUTICO(A)', 'Dispensação de medicamentos', '2 - Médio'),
-('AUXILIAR DE FARMÁCIA', 'Apoio na farmácia', '2 - Médio'),
-('TÉCNICO(A) DE RADIOLOGIA', 'Exames de imagem', '3 - Grave'),
-('AUXILIAR DE LIMPEZA', 'Higienização de ambientes', '2 - Médio'),
-('RECEPCIONISTA', 'Atendimento ao público', '1 - Leve'),
-('AUXILIAR ADMINISTRATIVO', 'Apoio administrativo', '1 - Leve'),
-('MOTORISTA', 'Transporte', '2 - Médio'),
-('ELETRICISTA', 'Manutenção elétrica', '3 - Grave'),
-('ENCANADOR', 'Manutenção hidráulica', '2 - Médio'),
-('COZINHEIRO(A)', 'Preparo de refeições', '2 - Médio'),
-('AUXILIAR DE NUTRIÇÃO', 'Apoio na cozinha', '2 - Médio'),
-('SEGURANÇA', 'Vigilância hospitalar', '2 - Médio'),
-('ESTAGIÁRIO(A)', 'Estágio supervisionado', '2 - Médio'),
-('TERCEIRIZADO(A)', 'Prestação de serviços', '2 - Médio')
-ON CONFLICT (nome) DO NOTHING;
+# Padrão Visual HUC
+HOSPITAL_NAME = "HOSPITAL UNIVERSITÁRIO DO CEARÁ"
+HOSPITAL_SUB = "ISGH | GOVERNO DO ESTADO DO CEARÁ"
+RODAPE_OFICIAL = "CNPJ: 05.268.526/0024-67 | AV DOUTOR SILAS MUNGUBA, 1700-ITAPERI | FORTALEZA/CE | CEP: 60.714-242"
+STATUS_ENTREGA = {
+    "PENDENTE": "Pendente ⏳",
+    "CONFIRMADO": "Confirmado ✅",
+    "DEVOLVIDO": "Devolvido ↩️",
+    "DANIFICADO": "Danificado ⚠️"
+}
 
--- 5. TABELA: COLABORADORES (oficiais)
-CREATE TABLE IF NOT EXISTS oficiais (
-    id SERIAL PRIMARY KEY,
-    nome TEXT NOT NULL,
-    matricula TEXT UNIQUE NOT NULL,
-    setor TEXT,
-    funcao TEXT,
-    whatsapp TEXT,
-    vinculo TEXT DEFAULT 'ISGH',
-    data_criacao TIMESTAMP DEFAULT NOW()
-);
+# ============================================================================
+# UTILITÁRIOS E SEGURANÇA
+# ============================================================================
 
--- Adiciona colunas novas
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='oficiais' AND column_name='data_admissao') THEN
-        ALTER TABLE oficiais ADD COLUMN data_admissao DATE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='oficiais' AND column_name='consentimento_lgpd') THEN
-        ALTER TABLE oficiais ADD COLUMN consentimento_lgpd BOOLEAN DEFAULT FALSE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='oficiais' AND column_name='data_consentimento') THEN
-        ALTER TABLE oficiais ADD COLUMN data_consentimento TIMESTAMP;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='oficiais' AND column_name='foto_url') THEN
-        ALTER TABLE oficiais ADD COLUMN foto_url TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='oficiais' AND column_name='assinatura_url') THEN
-        ALTER TABLE oficiais ADD COLUMN assinatura_url TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='oficiais' AND column_name='ativo') THEN
-        ALTER TABLE oficiais ADD COLUMN ativo BOOLEAN DEFAULT TRUE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='oficiais' AND column_name='data_atualizacao') THEN
-        ALTER TABLE oficiais ADD COLUMN data_atualizacao TIMESTAMP DEFAULT NOW();
-    END IF;
-END $$;
+def hash_senha(senha: str) -> str:
+    return hashlib.sha256(senha.encode()).hexdigest()
 
--- 6. TABELA: EPI (ep)
-CREATE TABLE IF NOT EXISTS ep (
-    id SERIAL PRIMARY KEY,
-    nome TEXT NOT NULL,
-    ca TEXT NOT NULL,
-    validade DATE NOT NULL,
-    data_criacao TIMESTAMP DEFAULT NOW()
-);
+def verificar_senha(senha_input: str, hash_armazenado: str) -> bool:
+    return hash_senha(senha_input) == hash_armazenado
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ep' AND column_name='tamanhos') THEN
-        ALTER TABLE ep ADD COLUMN tamanhos TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ep' AND column_name='estoque_minimo') THEN
-        ALTER TABLE ep ADD COLUMN estoque_minimo INTEGER DEFAULT 5;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ep' AND column_name='ativo') THEN
-        ALTER TABLE ep ADD COLUMN ativo BOOLEAN DEFAULT TRUE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ep' AND column_name='data_atualizacao') THEN
-        ALTER TABLE ep ADD COLUMN data_atualizacao TIMESTAMP DEFAULT NOW();
-    END IF;
-END $$;
+def format_br(date_str, include_time=False):
+    if not date_str: return "N/A"
+    try:
+        clean_date = str(date_str).replace('Z', '').split('+')[0]
+        dt = datetime.fromisoformat(clean_date)
+        return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
+    except: return str(date_str)
 
-INSERT INTO ep (nome, ca, validade, tamanhos, estoque_minimo) VALUES
-('LUVA NITRÍLICA PROCEDIMENTO', '42376', '2027-12-31', 'P,M,G', 50),
-('LUVA NITRÍLICA QUÍMICA', '42377', '2027-12-31', 'P,M,G,GG', 30),
-('MÁSCARA CIRÚRGICA TRIPLA', '42378', '2027-06-30', 'UNICO', 200),
-('MÁSCARA PFF2 (N95)', '42379', '2027-06-30', 'P,M,G', 100),
-('PROTETOR FACIAL (FACE SHIELD)', '42380', '2027-12-31', 'UNICO', 40),
-('ÓCULOS DE PROTEÇÃO', '42381', '2027-12-31', 'UNICO', 30),
-('AVENTAL IMPERMEÁVEL', '42382', '2027-12-31', 'P,M,G,GG', 20),
-('AVENTAL DESCARTÁVEL', '42383', '2027-12-31', 'UNICO', 100),
-('CAPOTE/CAPUZ DESCARTÁVEL', '42384', '2027-12-31', 'UNICO', 50),
-('SAPATILHA/PROTECTOR DE CALÇADO', '42385', '2027-12-31', 'P,M,G,GG', 30),
-('CAPACETE DE SEGURANÇA', '42386', '2027-12-31', 'UNICO', 10),
-('LUVA DE COURO RASPA', '42387', '2027-12-31', 'M,G,GG', 15),
-('PROTETOR AURICULAR (PLUG)', '42388', '2027-12-31', 'UNICO', 50),
-('PROTETOR AURICULAR (CONCHA)', '42389', '2027-12-31', 'UNICO', 20),
-('CREME PROTECTOR', '42390', '2027-12-31', 'UNICO', 20),
-('JALECO', '42391', '2027-12-31', 'P,M,G,GG,EXG', 25)
-ON CONFLICT DO NOTHING;
+def clean_str(text):
+    """Limpa strings e emojis para compatibilidade com PDF Latin-1"""
+    if not text: return ""
+    text_str = str(text).replace('✅', '!').replace('⏳', '...').replace('↩️', '(D)').replace('⚠️', '(X)')
+    import unicodedata
+    nfd = unicodedata.normalize('NFD', text_str)
+    return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn').encode('latin-1', 'replace').decode('latin-1')
 
--- 7. TABELA: ENTREGAS
-CREATE TABLE IF NOT EXISTS entregas (
-    id SERIAL PRIMARY KEY,
-    id_func INTEGER REFERENCES oficiais(id) ON DELETE RESTRICT,
-    id_epi INTEGER REFERENCES ep(id) ON DELETE RESTRICT,
-    token TEXT UNIQUE NOT NULL,
-    quantidade INTEGER DEFAULT 1,
-    status TEXT DEFAULT 'Pendente ⏳',
-    data_entrega TIMESTAMP DEFAULT NOW()
-);
+def mask_whatsapp(num):
+    n = str(num).replace("+", "").replace(" ", "").replace("-", "")
+    if len(n) == 11:
+        return f"({n[:2]}) {n[2:7]}-{n[7:11]}"
+    return n
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='entregas' AND column_name='tamanho') THEN
-        ALTER TABLE entregas ADD COLUMN tamanho TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='entregas' AND column_name='observacao') THEN
-        ALTER TABLE entregas ADD COLUMN observacao TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='entregas' AND column_name='data_devolucao') THEN
-        ALTER TABLE entregas ADD COLUMN data_devolucao DATE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='entregas' AND column_name='usuario_registro') THEN
-        ALTER TABLE entregas ADD COLUMN usuario_registro TEXT;
-    END IF;
-END $$;
+@st.cache_data(ttl=2)
+def load_data(table, order=None):
+    try:
+        q = supabase.table(table).select("*")
+        if order: q = q.order(order)
+        res = q.execute()
+        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except: return pd.DataFrame()
 
--- 8. TABELA: AUDITORIA (LGPD)
-CREATE TABLE IF NOT EXISTS auditoria (
-    id SERIAL PRIMARY KEY,
-    data_hora TIMESTAMP DEFAULT NOW(),
-    usuario TEXT,
-    acao TEXT NOT NULL,
-    tabela TEXT NOT NULL,
-    registro_id TEXT,
-    detalhes TEXT,
-    ip TEXT,
-    data_criacao TIMESTAMP DEFAULT NOW()
-);
+def get_cfg(k, d=""):
+    try:
+        res = supabase.table("configuracoes").select("valor").eq("chave", k).execute()
+        return res.data[0]['valor'] if res.data else d
+    except: return d
 
-CREATE INDEX IF NOT EXISTS idx_auditoria_data ON auditoria(data_hora DESC);
-CREATE INDEX IF NOT EXISTS idx_auditoria_usuario ON auditoria(usuario);
-CREATE INDEX IF NOT EXISTS idx_auditoria_acao ON auditoria(acao);
-CREATE INDEX IF NOT EXISTS idx_auditoria_tabela ON auditoria(tabela);
+# ============================================================================
+# WHATSAPP E AUDITORIA
+# ============================================================================
 
--- 9. POLÍTICAS RLS
-ALTER TABLE IF EXISTS oficiais ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS ep ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS entregas ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS funcoes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS auditoria ENABLE ROW LEVEL SECURITY;
+def registrar_auditoria(acao, tabela, registro_id=None, detalhes=""):
+    try:
+        usuario = st.session_state.get("usuario_logado", "ADMIN")
+        supabase.table("auditoria").insert({
+            "usuario": usuario, "acao": acao, "tabela": tabela,
+            "registro_id": str(registro_id), "detalhes": detalhes
+        }).execute()
+    except: pass
 
-CREATE POLICY IF NOT EXISTS "Permitir leitura oficiais" ON oficiais FOR SELECT USING (true);
-CREATE POLICY IF NOT EXISTS "Permitir leitura ep" ON ep FOR SELECT USING (true);
-CREATE POLICY IF NOT EXISTS "Permitir leitura entregas" ON entregas FOR SELECT USING (true);
-CREATE POLICY IF NOT EXISTS "Permitir leitura funcoes" ON funcoes FOR SELECT USING (true);
-CREATE POLICY IF NOT EXISTS "Permitir leitura auditoria" ON auditoria FOR SELECT USING (true);
+def enviar_whatsapp(numero, mensagem):
+    provedor = get_cfg("whatsapp_provedor", "desativado")
+    apikey = get_cfg("whatsapp_callmebot_apikey", "")
+    if provedor == "callmebot" and apikey:
+        num = str(numero).replace("(", "").replace(")", "").replace("-", "").replace(" ", "")
+        if not num.startswith("55"): num = "55" + num
+        url = f"https://api.callmebot.com/whatsapp.php?phone={num}&text={urllib.parse.quote(mensagem)}&apikey={apikey}"
+        try:
+            r = requests.get(url, timeout=10)
+            return r.status_code == 200
+        except: return False
+    return False
 
-CREATE POLICY IF NOT EXISTS "Permitir escrita oficiais" ON oficiais FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Permitir escrita ep" ON ep FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Permitir escrita entregas" ON entregas FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Permitir escrita funcoes" ON funcoes FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Permitir escrita auditoria" ON auditoria FOR ALL USING (true) WITH CHECK (true);
+# ============================================================================
+# PROCESSAMENTO DE CONFIRMAÇÃO (LINK DO ZAP)
+# ============================================================================
 
--- 10. TRIGGER: atualizar data_atualizacao
-CREATE OR REPLACE FUNCTION atualizar_data_modificacao()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.data_atualizacao = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+if "confirmar" in st.query_params:
+    tk = st.query_params["confirmar"]
+    if tk:
+        res = supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
+        if res.data:
+            st.balloons()
+            st.success("🛡️ RECEBIMENTO CONFIRMADO!")
+            registrar_auditoria("CONFIRMACAO_LINK", "entregas", res.data[0]['id'], f"Token: {tk}")
+            if st.button("Ir para o Sistema"):
+                st.query_params.clear()
+                st.rerun()
+        else: st.error("Link expirado ou inválido.")
+    st.stop()
 
-DO $$
-BEGIN
-    DROP TRIGGER IF EXISTS trg_oficiais_atualizacao ON oficiais;
-    CREATE TRIGGER trg_oficiais_atualizacao BEFORE UPDATE ON oficiais FOR EACH ROW EXECUTE FUNCTION atualizar_data_modificacao();
+# ============================================================================
+# GERADOR DE PDF PROFISSIONAL
+# ============================================================================
+
+def generate_pdf_ficha(func, hist_df, assinatura_url=None):
+    from fpdf import FPDF
+    try:
+        pdf = FPDF(orientation='L', unit='mm', format='A4')
+        pdf.add_page()
+        
+        # Cabeçalho Oficial
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, clean_str(HOSPITAL_NAME), border=0, ln=1, align='C')
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(0, 5, clean_str(HOSPITAL_SUB), border=0, ln=1, align='C')
+        pdf.ln(8)
+        
+        # Título Black Bar
+        pdf.set_fill_color(40, 40, 40); pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(0, 10, clean_str("FICHA INDIVIDUAL DE CONTROLE DE EQUIPAMENTO DE PROTEÇÃO INDIVIDUAL - NR-6"), border=0, ln=1, fill=True, align='C')
+        pdf.ln(4)
+        
+        # Dados do Colaborador
+        pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", 'B', 9)
+        pdf.cell(140, 7, clean_str(f"COLABORADOR: {func['nome']}"), border=1)
+        pdf.cell(0, 7, clean_str(f"MATRÍCULA: {func['matricula']}"), border=1, ln=1)
+        pdf.cell(90, 7, clean_str(f"SETOR: {func['setor']}"), border=1)
+        pdf.cell(90, 7, clean_str(f"FUNÇÃO: {func.get('funcao', 'N/A')}"), border=1)
+        pdf.cell(0, 7, clean_str(f"VÍNCULO: {func.get('vinculo', 'ISGH')}"), border=1, ln=1)
+        pdf.ln(5)
+        
+        # Tabela (Cabeçalho)
+        pdf.set_fill_color(230, 230, 230); pdf.set_font("Arial", 'B', 8)
+        pdf.cell(35, 8, clean_str("DATA/HORA"), border=1, align='C', fill=True)
+        pdf.cell(15, 8, clean_str("QTD"), border=1, align='C', fill=True)
+        pdf.cell(90, 8, clean_str("DESCRIÇÃO DO EPI"), border=1, align='C', fill=True)
+        pdf.cell(25, 8, clean_str("C.A."), border=1, align='C', fill=True)
+        pdf.cell(30, 8, clean_str("VAL. C.A."), border=1, align='C', fill=True)
+        pdf.cell(30, 8, clean_str("TOKEN"), border=1, align='C', fill=True)
+        pdf.cell(0, 8, clean_str("STATUS"), border=1, ln=1, align='C', fill=True)
+        
+        # Dados
+        pdf.set_font("Arial", '', 8)
+        for _, row in hist_df.iterrows():
+            pdf.cell(35, 8, str(row['Data/Hora']), border=1, align='C')
+            pdf.cell(15, 8, str(row['Qtd']), border=1, align='C')
+            pdf.cell(90, 8, clean_str(row['EPI']), border=1)
+            pdf.cell(25, 8, str(row['CA']), border=1, align='C')
+            pdf.cell(30, 8, str(row['Validade']), border=1, align='C')
+            pdf.cell(30, 8, str(row['Token']), border=1, align='C')
+            pdf.cell(0, 8, clean_str(row['Status']), border=1, ln=1, align='C')
+            
+        # Rodapé
+        pdf.ln(8); pdf.set_font("Arial", 'I', 8)
+        termo = get_cfg("ficha_template", "Recebi os EPIs listados e fui orientado sobre o uso.")
+        pdf.multi_cell(0, 4, clean_str(termo))
+        
+        if assinatura_url:
+            try:
+                r = requests.get(assinatura_url, timeout=5)
+                img = Image.open(BytesIO(r.content)).convert("RGB")
+                img.save("temp_sig.jpg")
+                pdf.image("temp_sig.jpg", x=20, y=pdf.get_y()+2, w=40)
+            except: pass
+
+        pdf.set_y(-15)
+        pdf.set_font("Arial", '', 7)
+        pdf.cell(0, 5, clean_str(RODAPE_OFICIAL), border=0, ln=0, align='C')
+        
+        return pdf.output(dest='S').encode('latin-1')
+    except Exception as e:
+        st.error(f"Erro PDF: {e}")
+        return None
+
+# ============================================================================
+# LOGIN E INTERFACE
+# ============================================================================
+
+if 'logado' not in st.session_state: st.session_state.logado = False
+
+if not st.session_state.logado:
+    st.markdown("<h1 style='text-align:center;'>🛡️ SESMT HUC</h1>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 1.5, 1])
+    with c2:
+        pw = st.text_input("Senha Admin", type="password")
+        if st.button("Acessar", use_container_width=True):
+            if pw == get_cfg("app_password", "1234"):
+                st.session_state.logado = True
+                st.session_state.usuario_logado = "ADMIN"
+                st.rerun()
+            else: st.error("Acesso Negado.")
+    st.stop()
+
+menu = st.sidebar.radio("SESMT", ["📊 Painel", "🚀 Entregar EPI", "👥 Colaboradores", "📦 Catálogo EPI", "🎖️ Funções", "📄 Ficha Individual", "⚙️ Ajustes"])
+if st.sidebar.button("Sair"): st.session_state.logado = False; st.rerun()
+
+# ----------------------------------------------------------------------------
+# 👥 COLABORADORES
+# ----------------------------------------------------------------------------
+if menu == "👥 Colaboradores":
+    st.title("👥 Gestão de Colaboradores")
+    t1, t2 = st.tabs(["➕ Novo Colaborador", "🔍 Consultar Lista"])
     
-    DROP TRIGGER IF EXISTS trg_ep_atualizacao ON ep;
-    CREATE TRIGGER trg_ep_atualizacao BEFORE UPDATE ON ep FOR EACH ROW EXECUTE FUNCTION atualizar_data_modificacao();
-    
-    DROP TRIGGER IF EXISTS trg_funcoes_atualizacao ON funcoes;
-    CREATE TRIGGER trg_funcoes_atualizacao BEFORE UPDATE ON funcoes FOR EACH ROW EXECUTE FUNCTION atualizar_data_modificacao();
-END $$;
+    with t1:
+        with st.form("f_add", clear_on_submit=True):
+            n, m = st.text_input("Nome Completo").upper(), st.text_input("Matrícula")
+            s = st.selectbox("Setor", [x['nome'] for x in load_data("setores").to_dict('records')] or ["SESMT"])
+            f_list = load_data("funcoes")
+            func = st.selectbox("Função / Cargo", f_list['nome'].tolist() if not f_list.empty else ["TÉCNICO"])
+            z = st.text_input("WhatsApp (DDD + Número)")
+            if st.form_submit_button("Salvar Cadastro"):
+                res = supabase.table("oficiais").insert({"nome":n, "matricula":m, "setor":s, "funcao":func, "whatsapp":z}).execute()
+                registrar_auditoria("INSERT", "oficiais", res.data[0]['id'], n)
+                st.success("Colaborador cadastrado!"); st.cache_data.clear()
+    with t2:
+        df = load_data("oficiais", "nome")
+        st.dataframe(df[['nome', 'matricula', 'setor', 'funcao', 'whatsapp']], use_container_width=True, hide_index=True)
 
--- 11. ÍNDICES DE PERFORMANCE
-CREATE INDEX IF NOT EXISTS idx_oficiais_matricula ON oficiais(matricula);
-CREATE INDEX IF NOT EXISTS idx_oficiais_nome ON oficiais(nome);
-CREATE INDEX IF NOT EXISTS idx_oficiais_setor ON oficiais(setor);
-CREATE INDEX IF NOT EXISTS idx_oficiais_funcao ON oficiais(funcao);
-CREATE INDEX IF NOT EXISTS idx_oficiais_ativo ON oficiais(ativo);
+# ----------------------------------------------------------------------------
+# 📦 CATÁLOGO EPI (CRUD)
+# ----------------------------------------------------------------------------
+elif menu == "📦 Catálogo EPI":
+    st.title("📦 Gestão de Itens e C.A.")
+    t1, t2 = st.tabs(["➕ Cadastrar", "🛠️ Gerenciar"])
+    with t1:
+        with st.form("new_epi"):
+            n, ca, v = st.text_input("Nome do EPI").upper(), st.text_input("C.A."), st.date_input("Validade")
+            if st.form_submit_button("Salvar Item"):
+                supabase.table("ep").insert({"nome":n, "ca":ca, "validade":str(v)}).execute()
+                st.success("EPI Cadastrado!"); st.cache_data.clear(); st.rerun()
+    with t2:
+        df_ep = load_data("ep", "nome")
+        if not df_ep.empty:
+            sel = st.selectbox("Item para editar/excluir", df_ep['nome'])
+            item = df_ep[df_ep['nome'] == sel].iloc[0]
+            with st.form("edit_epi"):
+                en, eca, ev = st.text_input("Nome", item['nome']).upper(), st.text_input("C.A.", item['ca']), st.date_input("Validade", datetime.strptime(item['validade'], '%Y-%m-%d'))
+                c1, c2 = st.columns(2)
+                if c1.form_submit_button("💾 Salvar"):
+                    supabase.table("ep").update({"nome":en, "ca":eca, "validade":str(ev)}).eq("id", int(item['id'])).execute()
+                    st.success("Atualizado!"); st.cache_data.clear(); st.rerun()
+                if c2.form_submit_button("🗑️ Deletar"):
+                    try:
+                        supabase.table("ep").delete().eq("id", int(item['id'])).execute()
+                        st.warning("Excluído!"); st.cache_data.clear(); st.rerun()
+                    except: st.error("Item em uso.")
 
-CREATE INDEX IF NOT EXISTS idx_ep_nome ON ep(nome);
-CREATE INDEX IF NOT EXISTS idx_ep_ca ON ep(ca);
-CREATE INDEX IF NOT EXISTS idx_ep_validade ON ep(validade);
-CREATE INDEX IF NOT EXISTS idx_ep_ativo ON ep(ativo);
+# ----------------------------------------------------------------------------
+# 📄 FICHA INDIVIDUAL (COM ASSINATURA CANVAS)
+# ----------------------------------------------------------------------------
+elif menu == "📄 Ficha Individual":
+    st.title("📄 Ficha de Controle de EPI")
+    df_f = load_data("oficiais", "nome")
+    if not df_f.empty:
+        target = st.selectbox("Selecione o Colaborador", df_f['nome'])
+        f_info = df_f[df_f['nome'] == target].iloc[0]
+        
+        # Área de Assinatura
+        st.subheader("✍️ Assinatura Digital")
+        from streamlit_drawable_canvas import st_canvas
+        canvas_result = st_canvas(fill_color="rgba(255, 255, 255, 0)", stroke_width=2, stroke_color="#000", background_color="#eee", height=100, width=300, drawing_mode="freedraw", key="canvas")
+        
+        if st.button("💾 Salvar Assinatura e Gerar PDF"):
+            if canvas_result.image_data is not None:
+                img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+                buffered = BytesIO()
+                img.save(buffered, format="PNG")
+                path = f"assinaturas/sig_{f_info['id']}.png"
+                supabase.storage.from_("assinaturas").upload(path, buffered.getvalue(), {"content-type": "image/png", "upsert": "true"})
+                url = supabase.storage.from_("assinaturas").get_public_url(path)
+                supabase.table("oficiais").update({"assinatura_url": url}).eq("id", int(f_info['id'])).execute()
+                st.success("Assinatura Salva!")
+                st.rerun()
 
-CREATE INDEX IF NOT EXISTS idx_entregas_id_func ON entregas(id_func);
-CREATE INDEX IF NOT EXISTS idx_entregas_id_epi ON entregas(id_epi);
-CREATE INDEX IF NOT EXISTS idx_entregas_token ON entregas(token);
-CREATE INDEX IF NOT EXISTS idx_entregas_status ON entregas(status);
-CREATE INDEX IF NOT EXISTS idx_entregas_data ON entregas(data_entrega DESC);
+        # Histórico e Download
+        hist_raw = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).execute().data
+        if hist_raw:
+            rows = [{"Data/Hora": format_br(h['data_entrega'], True), "Qtd": h['quantidade'], "EPI": h['ep']['nome'], "CA": h['ep']['ca'], "Validade": format_br(h['ep']['validade']), "Token": h['token'], "Status": h['status']} for h in hist_raw]
+            df_h = pd.DataFrame(rows)
+            st.dataframe(df_h, use_container_width=True, hide_index=True)
+            
+            sig_url = f_info.get('assinatura_url')
+            pdf = generate_pdf_ficha(dict(f_info), df_h, sig_url)
+            if pdf: st.download_button("📥 BAIXAR FICHA (PDF)", data=pdf, file_name=f"Ficha_{target}.pdf", mime="application/pdf")
+        else: st.info("Sem entregas.")
 
-CREATE INDEX IF NOT EXISTS idx_funcoes_nome ON funcoes(nome);
-CREATE INDEX IF NOT EXISTS idx_funcoes_ativo ON funcoes(ativo);
+# ----------------------------------------------------------------------------
+# OUTRAS SEÇÕES (REDUZIDAS PARA ESTABILIDADE)
+# ----------------------------------------------------------------------------
+elif menu == "📊 Painel":
+    st.title("📊 Painel SESMT")
+    df_f, df_e = load_data("oficiais"), load_data("entregas")
+    st.metric("Total Colaboradores", len(df_f))
+    st.metric("Total Entregas", len(df_e))
 
--- 12. VIEWS
-CREATE OR REPLACE VIEW vw_resumo_entregas AS
-SELECT 
-    o.id AS func_id,
-    o.nome AS func_nome,
-    o.matricula,
-    o.setor,
-    o.funcao,
-    COUNT(e.id) AS total_entregas,
-    SUM(e.quantidade) AS total_epis,
-    MAX(e.data_entrega) AS ultima_entrega
-FROM oficiais o
-LEFT JOIN entregas e ON o.id = e.id_func
-WHERE o.ativo = TRUE
-GROUP BY o.id, o.nome, o.matricula, o.setor, o.funcao;
+elif menu == "🚀 Entregar EPI":
+    st.title("🚀 Registrar Entrega")
+    df_f, df_ep = load_data("oficiais", "nome"), load_data("ep", "nome")
+    with st.form("ent"):
+        f = st.selectbox("Colaborador", df_f['matricula'] + " - " + df_f['nome'])
+        e = st.selectbox("EPI", df_ep['nome'])
+        q = st.number_input("Qtd", 1)
+        if st.form_submit_button("Confirmar"):
+            id_f = int(df_f[df_f['matricula'] + " - " + df_f['nome'] == f].iloc[0]['id'])
+            id_e = int(df_ep[df_ep['nome'] == e].iloc[0]['id'])
+            tk = str(int(time.time()))[-6:]
+            supabase.table("entregas").insert({"id_func":id_f, "id_epi":id_e, "token":tk, "quantidade":q, "status":STATUS_ENTREGA["PENDENTE"]}).execute()
+            st.success(f"Registrado! Token: {tk}"); st.cache_data.clear(); st.balloons()
 
-CREATE OR REPLACE VIEW vw_alertas_ca AS
-SELECT 
-    id,
-    nome,
-    ca,
-    validade,
-    CASE 
-        WHEN validade < CURRENT_DATE THEN 'VENCIDO'
-        WHEN validade <= CURRENT_DATE + INTERVAL '60 days' THEN 'VENCENDO'
-        ELSE 'OK'
-    END AS situacao,
-    (validade - CURRENT_DATE) AS dias_restantes
-FROM ep
-WHERE ativo = TRUE AND (validade < CURRENT_DATE + INTERVAL '90 days');
-
--- 13. COMENTÁRIOS LGPD
-COMMENT ON TABLE oficiais IS 'Dados pessoais de colaboradores - Tratamento conforme LGPD Art. 11, II, a (obrigação legal NR-6)';
-COMMENT ON TABLE entregas IS 'Registro de entregas de EPI - Dados sensíveis de saúde ocupacional. Acesso restrito ao SESMT.';
-COMMENT ON TABLE auditoria IS 'Logs de auditoria para rastreabilidade e conformidade LGPD Art. 37 e 38.';
-
--- FIM
-SELECT '🛡️ SESMT HUC v3.0 - Instalação concluída com sucesso!' AS status;
+elif menu == "⚙️ Ajustes":
+    st.title("⚙️ Configurações")
+    url = st.text_input("URL do App", get_cfg("url_sistema"))
+    if st.button("Salvar URL"):
+        supabase.table("configuracoes").upsert({"chave":"url_sistema", "valor":url}, on_conflict="chave").execute()
+        st.success("URL Salva!")
