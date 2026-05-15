@@ -86,10 +86,18 @@ def get_config(key: str, default: str = "") -> str:
         return res.data[0]['valor'] if res.data else default
     except: return default
 
+def set_config(key: str, valor: str) -> bool:
+    """Função restaurada: Salva os dados nas configurações"""
+    try:
+        supabase.table("configuracoes").upsert({"chave": key, "valor": valor}, on_conflict="chave").execute()
+        return True
+    except Exception as e:
+        logger.error(f"Erro ao salvar config: {e}")
+        return False
+
 @st.cache_data(ttl=2)
 def get_entregas_detalhadas():
     try:
-        # CORREÇÃO: Adicionado o campo 'whatsapp' na requisição da tabela 'oficiais'
         res = supabase.table("entregas").select("*, oficiais(nome, setor, whatsapp), ep(nome, ca, validade)").execute()
         return res.data if res.data else []
     except: return []
@@ -224,12 +232,17 @@ if menu == "📊 Dashboard":
             col1, col2 = st.columns([4, 1])
             nome_f = e['oficiais']['nome'] if e['oficiais'] else 'Desconhecido'
             nome_epi = e['ep']['nome'] if e['ep'] else 'Desconhecido'
-            col1.write(f"🔴 **{nome_f}** | Falta assinar: {nome_epi} (Qtd: {e['quantidade']})")
+            ca_epi = e['ep']['ca'] if e['ep'] else 'N/A'
+            qtd_epi = e.get('quantidade', 1)
             
-            # BLINDAGEM: Usando .get() para evitar o KeyError
+            col1.write(f"🔴 **{nome_f}** | Falta assinar: {nome_epi} (Qtd: {qtd_epi})")
+            
             zap = e['oficiais'].get('whatsapp', '') if e['oficiais'] else ''
             link = f"{get_config('url_sistema')}/?confirmar={e['token']}"
-            msg = urllib.parse.quote(f"🛡️ *SESMT HUC*\nAssine o recebimento do seu EPI ({nome_epi}):\n{link}")
+            
+            msg_texto = f"🛡️ *SESMT HUC*\nOlá {nome_f},\n\nPor favor, assine o recebimento do seu EPI:\n📦 *Item:* {nome_epi}\n🔢 *C.A.:* {ca_epi}\n📊 *Quantidade:* {qtd_epi}\n\n🔗 *Acesse o link para confirmar:* \n{link}"
+            msg = urllib.parse.quote(msg_texto)
+            
             col2.markdown(f'<a href="https://api.whatsapp.com/send?phone=55{zap}&text={msg}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:5px; width:100%;">Reenviar Link</button></a>', unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------------
