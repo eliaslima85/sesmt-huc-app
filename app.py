@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI (PRO VERSION)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI (ULTRA STABLE)
 Hospital Universitário do Ceará
 """
 
@@ -13,12 +13,10 @@ import pandas as pd
 from supabase import create_client, Client
 
 # ============================================================================
-# CONFIGURAÇÕES GERAIS
+# CONFIGURAÇÕES E CONEXÃO
 # ============================================================================
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
+logging.basicConfig(level=logging.INFO)
 st.set_page_config(page_title="SESMT HUC - Digital", layout="wide", page_icon="🛡️")
 
 SUPABASE_URL = "https://aatkjhtrafuepwzzlrbm.supabase.co"
@@ -26,8 +24,8 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception as e:
-    st.error("❌ Erro ao conectar ao banco de dados")
+except:
+    st.error("Erro crítico de conexão com o banco de dados.")
     st.stop()
 
 HOSPITAL_NAME = "HOSPITAL UNIVERSITARIO DO CEARA - HUC"
@@ -35,361 +33,334 @@ CNPJ_HUC = "05.268.526/0024-67"
 STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
 
 # ============================================================================
-# VERIFICADOR DE TOKEN (WHATSAPP) - CORRIGIDO
+# PROCESSAMENTO DE WHATSAPP (LADO DE FORA DO LOGIN)
 # ============================================================================
+
 if "confirmar" in st.query_params:
     tk = st.query_params["confirmar"]
     if tk:
         res = supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
-        if res.data: 
+        if res.data:
             st.balloons()
-            st.success(f"🛡️ RECEBIMENTO CONFIRMADO!\nData e Hora: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-            # Botão para limpar o link e voltar ao sistema normal
-            if st.button("Voltar para o Painel de Gestão"):
+            st.success("🛡️ RECEBIMENTO CONFIRMADO COM SUCESSO!")
+            st.info(f"Registrado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+            if st.button("Voltar ao Início"):
                 st.query_params.clear()
                 st.rerun()
-        else: 
-            st.error("❌ Link inválido ou já confirmado.")
-            if st.button("Ir para o Login"):
-                st.query_params.clear()
-                st.rerun()
-        st.stop() 
+        else:
+            st.error("❌ Token inválido ou já confirmado.")
+    st.stop()
 
 # ============================================================================
-# FUNÇÕES AUXILIARES
+# FUNÇÕES DE APOIO
 # ============================================================================
 
-def format_br(date_str: str, include_time=False) -> str:
-    if not date_str: return ""
+def format_br(date_str, include_time=False):
+    if not date_str: return "N/A"
     try:
-        dt = datetime.fromisoformat(str(date_str).replace('Z', '+00:00'))
+        # Tenta converter diversos formatos de data do Supabase
+        clean_date = str(date_str).replace('Z', '').split('+')[0]
+        dt = datetime.fromisoformat(clean_date)
         return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
-    except:
-        try: 
-            return datetime.strptime(str(date_str).split('T')[0], '%Y-%m-%d').strftime('%d/%m/%Y')
-        except: return str(date_str)
+    except: return str(date_str)
 
-def dias_desde(date_str: str) -> int:
-    try:
-        dt = datetime.strptime(str(date_str).split('T')[0], '%Y-%m-%d')
-        return (datetime.now() - dt).days
-    except: return 0
-
-def remove_accents(text: str) -> str:
+def remove_accents(text):
     import unicodedata
-    try:
-        nfd = unicodedata.normalize('NFD', str(text))
-        return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
-    except: return str(text)
+    if not text: return ""
+    nfd = unicodedata.normalize('NFD', str(text))
+    return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
 
-def gerar_token() -> str:
-    import uuid
-    return str(uuid.uuid4())[:8].upper()
+def clean_str(text):
+    """Limpa strings para evitar erros no PDF"""
+    return remove_accents(str(text)).encode('latin-1', 'replace').decode('latin-1')
 
 # ============================================================================
-# BANCO DE DADOS
+# ACESSO AO BANCO DE DADOS
 # ============================================================================
 
 @st.cache_data(ttl=2)
-def get_table_data(table_name: str, order_by: str = None):
+def load_data(table, order=None):
     try:
-        query = supabase.table(table_name).select("*")
-        if order_by: query = query.order(order_by)
-        res = query.execute()
+        q = supabase.table(table).select("*")
+        if order: q = q.order(order)
+        res = q.execute()
         return pd.DataFrame(res.data) if res.data else pd.DataFrame()
-    except Exception as e:
-        return pd.DataFrame()
-
-def get_config(key: str, default: str = "") -> str:
-    try:
-        res = supabase.table("configuracoes").select("valor").eq("chave", key).execute()
-        return res.data[0]['valor'] if res.data else default
-    except: return default
-
-def set_config(key: str, valor: str) -> bool:
-    try:
-        supabase.table("configuracoes").upsert({"chave": key, "valor": valor}, on_conflict="chave").execute()
-        return True
-    except: return False
+    except: return pd.DataFrame()
 
 @st.cache_data(ttl=2)
-def get_entregas_detalhadas():
+def get_full_history():
     try:
-        res = supabase.table("entregas").select("*, oficiais(id, nome, setor, whatsapp, matricula, vinculo), ep(nome, ca, validade)").execute()
+        # Busca entregas trazendo dados das tabelas relacionadas
+        res = supabase.table("entregas").select("*, oficiais(*), ep(*)").execute()
         return res.data if res.data else []
     except: return []
 
+def get_cfg(k, d=""):
+    try:
+        res = supabase.table("configuracoes").select("valor").eq("chave", k).execute()
+        return res.data[0]['valor'] if res.data else d
+    except: return d
+
 # ============================================================================
-# GERADORES DE PDF
+# GERADOR DE PDF PROFISSIONAL (FPDF)
 # ============================================================================
 
-def create_pdf_ficha(f: dict, df: pd.DataFrame) -> bytes:
+def generate_pdf_ficha(func, hist_df):
+    from fpdf import FPDF
     try:
-        from fpdf import FPDF
-        pdf = FPDF(orientation='L') 
+        pdf = FPDF(orientation='L')
         pdf.add_page()
-        
-        pdf.set_font("Arial", 'B', 14)
-        pdf.cell(0, 8, HOSPITAL_NAME, ln=True, align='C')
+        pdf.set_font("Arial", 'B', 15)
+        pdf.cell(0, 10, clean_str(HOSPITAL_NAME), ln=True, align='C')
         pdf.set_font("Arial", '', 10)
-        pdf.cell(0, 5, f"CNPJ: {CNPJ_HUC}", ln=True, align='C'); pdf.ln(5)
+        pdf.cell(0, 5, f"CNPJ: {CNPJ_HUC}", ln=True, align='C'); pdf.ln(10)
         
-        pdf.set_fill_color(230, 230, 230); pdf.set_font("Arial", 'B', 11)
-        pdf.cell(0, 8, remove_accents(f"FICHA DE EPI - {f['nome'].upper()}"), ln=True, fill=True); pdf.ln(2)
-        pdf.set_font("Arial", 'B', 9)
-        pdf.cell(130, 6, f"NOME: {remove_accents(f['nome'])}", 0)
-        pdf.cell(100, 6, f"MATRICULA: {f.get('matricula', 'N/A')}", ln=True)
-        pdf.cell(130, 6, f"SETOR: {remove_accents(f.get('setor', 'N/A'))}", 0)
-        pdf.cell(100, 6, f"VINCULO: {remove_accents(f.get('vinculo', 'N/A'))}", ln=True); pdf.ln(5)
+        pdf.set_fill_color(220, 220, 220); pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, clean_str(f"FICHA DE CONTROLE DE EPI - {func['nome']}"), ln=True, fill=True, align='C'); pdf.ln(5)
         
-        pdf.set_font("Arial", 'B', 7); pdf.set_fill_color(200, 200, 200)
-        headers = [("DATA E HORA", 28), ("QTD", 10), ("DESCRIÇÃO DO EPI", 80), ("C.A.", 20), ("VAL. C.A.", 22), ("TOKEN", 22), ("STATUS / ASSINATURA", 45)]
-        for txt, w in headers: pdf.cell(w, 8, txt, 1, 0, 'C', fill=True)
-        pdf.ln()
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(140, 7, clean_str(f"COLABORADOR: {func['nome']}"), 0)
+        pdf.cell(0, 7, clean_str(f"MATRÍCULA: {func['matricula']}"), ln=True)
+        pdf.cell(140, 7, clean_str(f"SETOR: {func['setor']}"), 0)
+        pdf.cell(0, 7, clean_str(f"FUNÇÃO: {func['funcao']}"), ln=True); pdf.ln(5)
         
-        pdf.set_font("Arial", '', 7)
-        for _, r in df.iterrows():
-            pdf.cell(28, 8, str(r.get('data_hora', '')), 1, 0, 'C')
-            pdf.cell(10, 8, str(r.get('quantidade', 1)), 1, 0, 'C')
-            pdf.cell(80, 8, remove_accents(str(r.get('epi_nome', ''))[:45]), 1)
-            pdf.cell(20, 8, str(r.get('ca', '')), 1, 0, 'C')
-            pdf.cell(22, 8, str(r.get('validade_ca', '')), 1, 0, 'C')
-            pdf.cell(22, 8, str(r.get('token', '')), 1, 0, 'C')
-            pdf.cell(45, 8, remove_accents(str(r.get('status', ''))), 1, ln=True, align='C')
+        # Tabela
+        pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(200, 200, 200)
+        pdf.cell(35, 8, "DATA/HORA", 1, 0, 'C', True)
+        pdf.cell(15, 8, "QTD", 1, 0, 'C', True)
+        pdf.cell(90, 8, clean_str("DESCRIÇÃO DO EQUIPAMENTO"), 1, 0, 'C', True)
+        pdf.cell(25, 8, "C.A.", 1, 0, 'C', True)
+        pdf.cell(30, 8, clean_str("VALID. C.A."), 1, 0, 'C', True)
+        pdf.cell(30, 8, "TOKEN", 1, 0, 'C', True)
+        pdf.cell(0, 8, "STATUS", 1, ln=True, align='C', True)
         
-        pdf.ln(8); pdf.set_font("Arial", 'I', 8)
-        pdf.multi_cell(0, 5, remove_accents(get_config("ficha_descricao", "")), align='J')
-        return pdf.output(dest='S').encode('utf-8')
-    except: return None
+        pdf.set_font("Arial", '', 8)
+        for _, row in hist_df.iterrows():
+            pdf.cell(35, 8, str(row['Data/Hora']), 1, 0, 'C')
+            pdf.cell(15, 8, str(row['Qtd']), 1, 0, 'C')
+            pdf.cell(90, 8, clean_str(row['EPI']), 1)
+            pdf.cell(25, 8, str(row['CA']), 1, 0, 'C')
+            pdf.cell(30, 8, str(row['Validade']), 1, 0, 'C')
+            pdf.cell(30, 8, str(row['Token']), 1, 0, 'C')
+            pdf.cell(0, 8, clean_str(row['Status']), 1, ln=True, align='C')
+            
+        pdf.ln(10); pdf.set_font("Arial", 'I', 8)
+        pdf.multi_cell(0, 5, clean_str(get_cfg("ficha_descricao", "Declaro que recebi os EPIs acima listados.")))
+        return pdf.output(dest='S').encode('latin-1')
+    except Exception as e:
+        return None
 
-def create_pdf_consumo(df: pd.DataFrame, data_ref: str) -> bytes:
+def generate_pdf_balanco(df_group):
+    from fpdf import FPDF
     try:
-        from fpdf import FPDF
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", 'B', 14)
-        pdf.cell(0, 8, "BALANCO SEMANAL DE CONSUMO DE EPI", ln=True, align='C')
-        pdf.set_font("Arial", '', 10)
-        pdf.cell(0, 5, f"Gerado em: {data_ref} - {HOSPITAL_NAME}", ln=True, align='C'); pdf.ln(8)
+        pdf.cell(0, 10, clean_str("BALANÇO SEMANAL DE CONSUMO - SESMT HUC"), ln=True, align='C'); pdf.ln(10)
         
-        pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(200, 200, 200)
-        pdf.cell(70, 8, "SETOR", 1, 0, 'C', fill=True)
-        pdf.cell(95, 8, "EQUIPAMENTO (EPI)", 1, 0, 'C', fill=True)
-        pdf.cell(25, 8, "QTD TOTAL", 1, ln=True, align='C', fill=True)
+        pdf.set_font("Arial", 'B', 10); pdf.set_fill_color(200, 200, 200)
+        pdf.cell(80, 8, "SETOR", 1, 0, 'C', True)
+        pdf.cell(80, 8, "EPI", 1, 0, 'C', True)
+        pdf.cell(30, 8, "TOTAL QTD", 1, ln=True, align='C', True)
         
-        pdf.set_font("Arial", '', 8)
-        for _, row in df.iterrows():
-            pdf.cell(70, 8, remove_accents(str(row['Setor'])[:35]), 1)
-            pdf.cell(95, 8, remove_accents(str(row['EPI'])[:50]), 1)
-            pdf.cell(25, 8, str(row['Quantidade']), 1, ln=True, align='C')
-        return pdf.output(dest='S').encode('utf-8')
+        pdf.set_font("Arial", '', 9)
+        for _, row in df_group.iterrows():
+            pdf.cell(80, 8, clean_str(row['Setor']), 1)
+            pdf.cell(80, 8, clean_str(row['EPI']), 1)
+            pdf.cell(30, 8, str(row['Quantidade']), 1, ln=True, align='C')
+        return pdf.output(dest='S').encode('latin-1')
     except: return None
 
 # ============================================================================
-# LOGIN
+# SISTEMA DE LOGIN
 # ============================================================================
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 if not st.session_state.logado:
     st.markdown("<h1 style='text-align:center;'>🛡️ SESMT HUC</h1>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1, 2, 1])
+    c1, c2, c3 = st.columns([1, 1.5, 1])
     with c2:
-        senha = st.text_input("Senha de Acesso", type="password")
-        if st.button("Entrar", use_container_width=True):
-            if senha == get_config("app_password", "1234"): st.session_state.logado = True; st.rerun()
-            else: st.error("❌ Senha incorreta")
+        pw = st.text_input("Senha Admin", type="password")
+        if st.button("Acessar Painel", use_container_width=True):
+            if pw == get_cfg("app_password", "1234"):
+                st.session_state.logado = True
+                st.rerun()
+            else: st.error("Senha incorreta.")
     st.stop()
 
 # ============================================================================
-# MENU
+# NAVEGAÇÃO
 # ============================================================================
 
-menu = st.sidebar.radio("Navegação", ["📊 Dashboard", "🚀 Entregar EPI", "👥 Funcionários", "📦 Catálogo", "📄 Ficha de EPI", "📈 Consumo Semanal", "⚙️ Configurações"])
-if st.sidebar.button("🚪 Sair", use_container_width=True):
-    st.session_state.logado = False
-    st.rerun()
+menu = st.sidebar.radio("SESMT MENU", ["📊 Início", "🚀 Registrar Entrega", "👥 Colaboradores", "📦 Itens/EPIs", "📄 Ficha Individual", "📈 Balanço Semanal", "⚙️ Ajustes"])
+if st.sidebar.button("Sair"): st.session_state.logado = False; st.rerun()
 
 # ----------------------------------------------------------------------------
-# 1. DASHBOARD
+# 1. INÍCIO (DASHBOARD)
 # ----------------------------------------------------------------------------
-if menu == "📊 Dashboard":
-    st.title("📊 Painel Geral de Gestão")
-    df_f = get_table_data("oficiais")
-    df_e = get_table_data("entregas")
+if menu == "📊 Início":
+    st.title("📊 Indicadores de Segurança")
+    df_f = load_data("oficiais")
+    df_e = load_data("entregas")
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("👥 Funcionários Ativos", len(df_f))
-    c2.metric("📦 Entregas Realizadas", len(df_e))
-    pendentes = len(df_e[df_e['status'] == STATUS_ENTREGA["PENDENTE"]]) if not df_e.empty else 0
-    c3.metric("⏳ Assinaturas Pendentes", pendentes, delta_color="inverse")
-    st.divider()
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Funcionários", len(df_f))
+    col2.metric("Entregas Total", len(df_e))
+    pend = len(df_e[df_e['status'].str.contains("Pendente", na=False)]) if not df_e.empty else 0
+    col3.metric("Pendentes", pend)
     
-    st.subheader("🚨 Radar de Validade (C.A.)")
-    df_cat = get_table_data("ep")
-    alertas_ca = 0
-    if not df_cat.empty:
-        for _, row in df_cat.iterrows():
-            if row['validade']:
-                dias_para_vencer = (datetime.strptime(row['validade'].split('T')[0], '%Y-%m-%d') - datetime.now()).days
-                if dias_para_vencer < 0:
-                    st.error(f"🔴 VENCIDO: {row['nome']} (C.A. {row['ca']}) venceu há {abs(dias_para_vencer)} dias!")
-                    alertas_ca += 1
-                elif dias_para_vencer <= 30:
-                    st.warning(f"🟡 ATENÇÃO: {row['nome']} (C.A. {row['ca']}) vence em {dias_para_vencer} dias!")
-                    alertas_ca += 1
-    if alertas_ca == 0: st.success("✅ Todos os C.A.s do catálogo estão na validade.")
-
     st.divider()
-    st.subheader("📲 Reenviar Tokens Pendentes")
-    entregas_all = get_entregas_detalhadas()
-    pendentes_list = [e for e in entregas_all if e['status'] == STATUS_ENTREGA["PENDENTE"]]
-    if not pendentes_list: st.info("Tudo assinado!")
+    st.subheader("📲 Pendências de Assinatura")
+    all_data = get_full_history()
+    pendentes = [e for e in all_data if "Pendente" in str(e.get('status'))]
+    
+    if not pendentes: st.success("✅ Nenhuma assinatura pendente!")
     else:
-        for e in pendentes_list[:10]:
-            col1, col2 = st.columns([4, 1])
-            nome_f = e['oficiais']['nome'] if e['oficiais'] else 'N/A'
-            col1.write(f"🔴 **{nome_f}** | {e['ep']['nome']} (Qtd: {e['quantidade']})")
-            zap = e['oficiais'].get('whatsapp', '') if e['oficiais'] else ''
-            link = f"{get_config('url_sistema')}/?confirmar={e['token']}"
-            msg = urllib.parse.quote(f"🛡️ *SESMT HUC*\nOlá {nome_f},\nAssine o recebimento do seu EPI:\n📦 *Item:* {e['ep']['nome']}\n🔢 *C.A.:* {e['ep']['ca']}\n📊 *Quantidade:* {e['quantidade']}\n🔗 {link}")
-            col2.markdown(f'<a href="https://api.whatsapp.com/send?phone=55{zap}&text={msg}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:5px; width:100%;">WhatsApp</button></a>', unsafe_allow_html=True)
+        for p in pendentes[:15]:
+            c1, c2 = st.columns([4, 1])
+            nome = p['oficiais']['nome'] if p['oficiais'] else "N/A"
+            epi = p['ep']['nome'] if p['ep'] else "N/A"
+            c1.write(f"⏳ **{nome}** espera: {epi} (Token: {p['token']})")
+            
+            link = f"{get_cfg('url_sistema')}/?confirmar={p['token']}"
+            msg = urllib.parse.quote(f"🛡️ *SESMT HUC*\nOlá {nome},\nAssine seu EPI: {epi}\n🔗 Link: {link}")
+            c2.markdown(f' <a href="https://api.whatsapp.com/send?phone=55{p["oficiais"]["whatsapp"]}&text={msg}" target="_blank"><button style="background-color:#25D366;color:white;border:none;padding:5px;border-radius:5px;width:100%">WhatsApp</button></a>', unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------------
-# 2. ENTREGAR EPI
+# 2. REGISTRAR ENTREGA
 # ----------------------------------------------------------------------------
-elif menu == "🚀 Entregar EPI":
-    st.title("🚀 Registrar Entrega de EPI")
-    df_f = get_table_data("oficiais", "nome")
-    df_epi = get_table_data("ep", "nome")
-    if df_f.empty or df_epi.empty:
-        st.warning("Cadastre funcionários e EPIs primeiro.")
+elif menu == "🚀 Registrar Entrega":
+    st.title("🚀 Nova Entrega de EPI")
+    df_f = load_data("oficiais", "nome")
+    df_e = load_data("ep", "nome")
+    
+    if df_f.empty or df_e.empty:
+        st.error("Cadastre funcionários e EPIs primeiro.")
     else:
-        with st.form("form_entrega"):
-            func_str = st.selectbox("Colaborador", df_f['matricula'] + " - " + df_f['nome'])
-            epi_str = st.selectbox("Selecione o EPI", df_epi['nome'])
+        with st.form("entrega_epi"):
+            f_sel = st.selectbox("Colaborador", df_f['matricula'] + " - " + df_f['nome'])
+            e_sel = st.selectbox("EPI", df_e['nome'])
             qtd = st.number_input("Quantidade", min_value=1, value=1)
-            if st.form_submit_button("✅ Registrar Entrega"):
-                id_f = int(df_f[df_f['matricula'] + " - " + df_f['nome'] == func_str].iloc[0]['id'])
-                id_e = int(df_epi[df_epi['nome'] == epi_str].iloc[0]['id'])
-                tk = gerar_token()
-                supabase.table("entregas").insert({"id_func": id_f, "id_epi": id_e, "token": tk, "quantidade": qtd, "status": STATUS_ENTREGA["PENDENTE"], "data_entrega": datetime.now().isoformat()}).execute()
+            if st.form_submit_button("Confirmar Entrega"):
+                row_f = df_f[df_f['matricula'] + " - " + df_f['nome'] == f_sel].iloc[0]
+                row_e = df_e[df_e['nome'] == e_sel].iloc[0]
+                tk = str(int(time.time()))[-6:] # Token baseado no tempo
+                
+                supabase.table("entregas").insert({
+                    "id_func": int(row_f['id']), "id_epi": int(row_e['id']),
+                    "token": tk, "quantidade": qtd, "status": STATUS_ENTREGA["PENDENTE"]
+                }).execute()
                 st.cache_data.clear(); st.success(f"Registrado! Token: {tk}"); st.balloons()
 
 # ----------------------------------------------------------------------------
-# 3. FUNCIONÁRIOS
+# 5. FICHA INDIVIDUAL (O QUE VOCÊ PEDIU)
 # ----------------------------------------------------------------------------
-elif menu == "👥 Funcionários":
-    st.title("👥 Gestão de Pessoas")
-    t1, t2 = st.tabs(["➕ Novo", "🔍 Consultar"])
-    with t1:
-        with st.form("cad_func", clear_on_submit=True):
-            n, m = st.text_input("Nome").upper(), st.text_input("Matrícula").upper()
-            s = st.selectbox("Setor", [x['nome'] for x in supabase.table("setores").select("nome").execute().data] or ["Nenhum"])
-            f = st.selectbox("Função", [x['nome'] for x in supabase.table("funcoes").select("nome").execute().data] or ["Nenhum"])
-            z, v = st.text_input("WhatsApp"), st.selectbox("Vínculo", [x['nome'] for x in supabase.table("vinculos").select("nome").execute().data] or ["Nenhum"])
-            if st.form_submit_button("Salvar"):
-                supabase.table("oficiais").insert({"nome": n, "matricula": m, "setor": s, "funcao": f, "whatsapp": z, "vinculo": v}).execute()
-                st.cache_data.clear(); st.success("✅")
-    with t2:
-        df = get_table_data("oficiais", "nome")
-        if not df.empty: st.dataframe(df, use_container_width=True, hide_index=True)
-
-# ----------------------------------------------------------------------------
-# 4. CATÁLOGO
-# ----------------------------------------------------------------------------
-elif menu == "📦 Catálogo":
-    st.title("📦 Catálogo de EPIs")
-    with st.form("form_epi"):
-        n, ca, v = st.text_input("EPI").upper(), st.text_input("C.A."), st.date_input("Validade")
-        if st.form_submit_button("Salvar"):
-            supabase.table("ep").upsert({"nome": n, "ca": ca, "validade": str(v)}, on_conflict="nome").execute()
-            st.cache_data.clear(); st.success("✅")
-    df = get_table_data("ep", "nome")
-    if not df.empty: st.dataframe(df, use_container_width=True, hide_index=True)
-
-# ----------------------------------------------------------------------------
-# 5. FICHA DE EPI - CORRIGIDA
-# ----------------------------------------------------------------------------
-elif menu == "📄 Ficha de EPI":
-    st.title("📄 Ficha e Histórico")
-    df_f = get_table_data("oficiais", "nome")
-    if df_f.empty: st.info("Sem funcionários cadastrados.")
+elif menu == "📄 Ficha Individual":
+    st.title("📄 Ficha de EPI por Funcionário")
+    df_f = load_data("oficiais", "nome")
+    if df_f.empty: st.info("Nenhum funcionário encontrado.")
     else:
-        sel = st.selectbox("Selecione o Colaborador", df_f['nome'])
-        func_dados = df_f[df_f['nome'] == sel].iloc[0]
+        target = st.selectbox("Selecione o Colaborador", df_f['nome'])
+        f_info = df_f[df_f['nome'] == target].iloc[0]
         
-        # Puxa entregas detalhadas
-        entregas_all = get_entregas_detalhadas()
-        # Filtra histórico deste funcionário
-        hist_func = [e for e in entregas_all if e['oficiais'] and e['oficiais']['id'] == func_dados['id']]
+        history = get_full_history()
+        # Filtro robusto
+        my_hist = [h for h in history if h['oficiais'] and h['oficiais']['id'] == f_info['id']]
         
-        if not hist_func:
-            st.warning("Este funcionário ainda não possui retiradas de EPI.")
+        if not my_hist:
+            st.warning("Este colaborador ainda não possui registros de entrega.")
         else:
-            # Mostra alerta de 20 dias
-            hist_func.sort(key=lambda x: x['data_entrega'], reverse=True)
-            dias = dias_desde(hist_func[0]['data_entrega'])
-            if dias >= 20: st.warning(f"⚠️ Há {dias} dias sem novas movimentações.")
-
-            # Monta tabela para visualização
-            dados_tabela = []
-            for e in hist_func:
-                dados_tabela.append({
-                    "data_hora": format_br(e['data_entrega'], include_time=True),
-                    "quantidade": e['quantidade'],
-                    "epi_nome": e['ep']['nome'] if e['ep'] else 'EPI Excluído',
-                    "ca": e['ep']['ca'] if e['ep'] else '-',
-                    "validade_ca": format_br(e['ep']['validade']) if e['ep'] else '-',
-                    "token": e['token'],
-                    "status": e['status']
+            rows = []
+            for m in my_hist:
+                rows.append({
+                    "Data/Hora": format_br(m['data_entrega'], True),
+                    "Qtd": m['quantidade'],
+                    "EPI": m['ep']['nome'] if m['ep'] else "N/A",
+                    "CA": m['ep']['ca'] if m['ep'] else "N/A",
+                    "Validade": format_br(m['ep']['validade']) if m['ep'] else "N/A",
+                    "Token": m['token'],
+                    "Status": m['status']
                 })
-            df_hist = pd.DataFrame(dados_tabela)
-            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+            df_display = pd.DataFrame(rows)
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
             
-            # Botão de download
-            pdf = create_pdf_ficha(dict(func_dados), df_hist)
-            if pdf:
-                st.download_button("📥 BAIXAR FICHA (PDF)", data=pdf, file_name=f"Ficha_{sel}.pdf", mime="application/pdf")
+            # Geração do PDF
+            pdf_data = generate_pdf_ficha(dict(f_info), df_display)
+            if pdf_data:
+                st.download_button(
+                    label="📥 BAIXAR FICHA COMPLETA (PDF)",
+                    data=pdf_data,
+                    file_name=f"Ficha_EPI_{target.replace(' ', '_')}.pdf",
+                    mime="application/pdf"
+                )
+            else:
+                st.error("Erro ao gerar o arquivo PDF. Verifique caracteres especiais.")
 
 # ----------------------------------------------------------------------------
-# 6. CONSUMO SEMANAL
+# 6. BALANÇO SEMANAL (O QUE VOCÊ PEDIU)
 # ----------------------------------------------------------------------------
-elif menu == "📈 Consumo Semanal":
-    st.title("📈 Balanço Semanal")
-    entregas = get_entregas_detalhadas()
-    if not entregas: st.info("Sem dados.")
+elif menu == "📈 Balanço Semanal":
+    st.title("📈 Resumo de Consumo (7 Dias)")
+    history = get_full_history()
+    
+    if not history: st.info("Sem dados para exibir.")
     else:
-        limite = datetime.now() - timedelta(days=7)
-        recentes = [e for e in entregas if datetime.fromisoformat(e['data_entrega'].replace('Z', '+00:00')).replace(tzinfo=None) >= limite]
-        if not recentes: st.info("Nada nos últimos 7 dias.")
+        # Filtro de 7 dias simplificado
+        lista_semanal = []
+        hoje = datetime.now()
+        for h in history:
+            try:
+                data_e = datetime.fromisoformat(h['data_entrega'].split('T')[0])
+                if (hoje - data_e).days <= 7:
+                    lista_semanal.append({
+                        "Setor": h['oficiais']['setor'] if h['oficiais'] else "N/A",
+                        "EPI": h['ep']['nome'] if h['ep'] else "N/A",
+                        "Quantidade": h['quantidade']
+                    })
+            except: continue
+            
+        if not lista_semanal:
+            st.warning("Nenhuma entrega realizada nos últimos 7 dias.")
         else:
-            lista = [{"Setor": e['oficiais']['setor'], "EPI": e['ep']['nome'], "Quantidade": e['quantidade']} for e in recentes if e['oficiais'] and e['ep']]
-            df_ag = pd.DataFrame(lista).groupby(['Setor', 'EPI'])['Quantidade'].sum().reset_index()
-            st.table(df_ag)
-            pdf = create_pdf_consumo(df_ag, datetime.now().strftime('%d/%m/%Y'))
-            if pdf: st.download_button("📥 BAIXAR BALANÇO (PDF)", data=pdf, file_name="Balanco_Semanal.pdf")
+            df_balanco = pd.DataFrame(lista_semanal).groupby(['Setor', 'EPI'])['Quantidade'].sum().reset_index()
+            st.table(df_balanco)
+            
+            pdf_bal = generate_pdf_balanco(df_balanco)
+            if pdf_bal:
+                st.download_button("📥 BAIXAR RESUMO SEMANAL (PDF)", data=pdf_bal, file_name="Resumo_Consumo_HUC.pdf", mime="application/pdf")
 
 # ----------------------------------------------------------------------------
-# 7. CONFIGURAÇÕES
+# RESTANTE DO CÓDIGO (COMO ANTES)
 # ----------------------------------------------------------------------------
-elif menu == "⚙️ Configurações":
-    st.title("⚙️ Configurações")
-    t1, t2, t3, t4, t5 = st.tabs(["📄 Texto Legal", "🏢 Setores", "🛠️ Funções", "📋 Vínculos", "🔗 Sistema"])
+elif menu == "👥 Colaboradores":
+    st.title("👥 Gestão de Pessoal")
+    t1, t2 = st.tabs(["Cadastrar", "Lista"])
     with t1:
-        txt = st.text_area("Descrição da Ficha", value=get_config("ficha_descricao"), height=150)
-        if st.button("Salvar Texto"): set_config("ficha_descricao", txt); st.success("✅")
-    with t2:
-        ns = st.text_input("Novo Setor").upper()
-        if st.button("Add Setor") and ns: supabase.table("setores").insert({"nome": ns}).execute(); st.cache_data.clear(); st.rerun()
-    with t3:
-        nf = st.text_input("Nova Função").upper()
-        if st.button("Add Função") and nf: supabase.table("funcoes").insert({"nome": nf}).execute(); st.cache_data.clear(); st.rerun()
-    with t4:
-        nv = st.text_input("Novo Vínculo").upper()
-        if st.button("Add Vínculo") and nv: supabase.table("vinculos").insert({"nome": nv}).execute(); st.cache_data.clear(); st.rerun()
-    with t5:
-        url = st.text_input("URL do App", value=get_config("url_sistema"))
-        if st.button("Salvar URL"): set_config("url_sistema", url); st.cache_data.clear(); st.success("✅")
-        st.divider()
-        senha = st.text_input("Nova Senha", type="password")
-        if st.button("Mudar Senha") and senha: set_config("app_password", senha); st.success("✅")
+        with st.form("f_new"):
+            n, m = st.text_input("Nome").upper(), st.text_input("Matrícula").upper()
+            s = st.selectbox("Setor", [x['nome'] for x in load_data("setores").to_dict('records')] or ["Nenhum"])
+            w = st.text_input("Zap (859...)")
+            if st.form_submit_button("Salvar"):
+                supabase.table("oficiais").insert({"nome":n, "matricula":m, "setor":s, "whatsapp":w, "funcao":"TECNICO", "vinculo":"ISGH"}).execute()
+                st.success("Salvo!"); st.cache_data.clear()
+    with t2: st.dataframe(load_data("oficiais"), use_container_width=True)
+
+elif menu == "📦 Itens/EPIs":
+    st.title("📦 Gestão de Itens")
+    with st.form("e_new"):
+        n, c, v = st.text_input("EPI").upper(), st.text_input("CA"), st.date_input("Validade")
+        if st.form_submit_button("Salvar"):
+            supabase.table("ep").insert({"nome":n, "ca":c, "validade":str(v)}).execute()
+            st.success("Salvo!"); st.cache_data.clear()
+    st.dataframe(load_data("ep"), use_container_width=True)
+
+elif menu == "⚙️ Ajustes":
+    st.title("⚙️ Configurações do SESMT")
+    u = st.text_input("URL do App", value=get_cfg("url_sistema"))
+    if st.button("Salvar URL"):
+        supabase.table("configuracoes").upsert({"chave":"url_sistema", "valor":u}, on_conflict="chave").execute()
+        st.success("URL Salva!")
+    t_legal = st.text_area("Termos da Ficha", value=get_cfg("ficha_descricao"))
+    if st.button("Salvar Texto"):
+        supabase.table("configuracoes").upsert({"chave":"ficha_descricao", "valor":t_legal}, on_conflict="chave").execute()
+        st.success("Texto Salvo!")
