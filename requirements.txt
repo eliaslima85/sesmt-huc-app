@@ -1,4 +1,8 @@
 streamlit
 pandas
+numpy
+pillow
 supabase
+requests
 fpdf
+streamlit-drawable-canvas
