@@ -28,8 +28,9 @@ except:
     st.error("Erro crítico de conexão com o banco de dados.")
     st.stop()
 
-HOSPITAL_NAME = "HOSPITAL UNIVERSITARIO DO CEARA - HUC"
-CNPJ_HUC = "05.268.526/0024-67"
+HOSPITAL_NAME = "HOSPITAL UNIVERSITÁRIO DO CEARÁ - ISGH"
+HOSPITAL_SUB = "GOVERNO DO ESTADO DO CEARÁ"
+RODAPE_PADRAO = "CNPJ: 05.268.526/0024-67 | AV DOUTOR SILAS MUNGUBA, 1700-ITAPERI | FORTALEZA/CE | CEP: 60.714-242"
 STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
 
 # ============================================================================
@@ -63,14 +64,14 @@ def format_br(date_str, include_time=False):
         return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
     except: return str(date_str)
 
-def remove_accents(text):
-    import unicodedata
-    if not text: return ""
-    nfd = unicodedata.normalize('NFD', str(text))
-    return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
-
 def clean_str(text):
-    return remove_accents(str(text)).encode('latin-1', 'replace').decode('latin-1')
+    """Limpa strings e traduz emojis do sistema para o PDF"""
+    if not text: return ""
+    text_str = str(text).replace('✅', '!').replace('⏳', '...')
+    import unicodedata
+    nfd = unicodedata.normalize('NFD', text_str)
+    clean = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
+    return clean.encode('latin-1', 'replace').decode('latin-1')
 
 # ============================================================================
 # ACESSO AO BANCO DE DADOS
@@ -99,7 +100,7 @@ def get_cfg(k, d=""):
     except: return d
 
 # ============================================================================
-# GERADOR DE PDF PROFISSIONAL (FPDF)
+# GERADOR DE PDF PROFISSIONAL COM NOVO CABEÇALHO/RODAPÉ
 # ============================================================================
 
 def generate_pdf_ficha(func, hist_df):
@@ -107,11 +108,15 @@ def generate_pdf_ficha(func, hist_df):
     try:
         pdf = FPDF(orientation='L')
         pdf.add_page()
-        pdf.set_font("Arial", 'B', 15)
-        pdf.cell(0, 10, clean_str(HOSPITAL_NAME), ln=True, align='C')
-        pdf.set_font("Arial", '', 10)
-        pdf.cell(0, 5, f"CNPJ: {CNPJ_HUC}", ln=True, align='C'); pdf.ln(10)
         
+        # Cabeçalho Oficial
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 8, clean_str(HOSPITAL_NAME), ln=True, align='C')
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(0, 5, clean_str(HOSPITAL_SUB), ln=True, align='C')
+        pdf.ln(5)
+        
+        # Informações do Funcionário
         pdf.set_fill_color(220, 220, 220); pdf.set_font("Arial", 'B', 12)
         pdf.cell(0, 10, clean_str(f"FICHA DE CONTROLE DE EPI - {func['nome']}"), ln=True, fill=True, align='C'); pdf.ln(5)
         
@@ -121,14 +126,14 @@ def generate_pdf_ficha(func, hist_df):
         pdf.cell(140, 7, clean_str(f"SETOR: {func['setor']}"), 0)
         pdf.cell(0, 7, clean_str(f"FUNÇÃO: {func['funcao']}"), ln=True); pdf.ln(5)
         
+        # Tabela de EPIs
         pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(200, 200, 200)
-        pdf.cell(35, 8, "DATA/HORA", 1, 0, 'C', True)
-        pdf.cell(15, 8, "QTD", 1, 0, 'C', True)
-        pdf.cell(90, 8, clean_str("DESCRIÇÃO DO EQUIPAMENTO"), 1, 0, 'C', True)
-        pdf.cell(25, 8, "C.A.", 1, 0, 'C', True)
-        pdf.cell(30, 8, clean_str("VALID. C.A."), 1, 0, 'C', True)
-        pdf.cell(30, 8, "TOKEN", 1, 0, 'C', True)
-        # CORREÇÃO: fill=True em vez de apenas True
+        pdf.cell(35, 8, "DATA/HORA", 1, 0, 'C', fill=True)
+        pdf.cell(15, 8, "QTD", 1, 0, 'C', fill=True)
+        pdf.cell(90, 8, clean_str("DESCRIÇÃO DO EQUIPAMENTO"), 1, 0, 'C', fill=True)
+        pdf.cell(25, 8, "C.A.", 1, 0, 'C', fill=True)
+        pdf.cell(30, 8, clean_str("VALID. C.A."), 1, 0, 'C', fill=True)
+        pdf.cell(30, 8, "TOKEN", 1, 0, 'C', fill=True)
         pdf.cell(0, 8, "STATUS", 1, ln=True, align='C', fill=True)
         
         pdf.set_font("Arial", '', 8)
@@ -141,8 +146,15 @@ def generate_pdf_ficha(func, hist_df):
             pdf.cell(30, 8, str(row['Token']), 1, 0, 'C')
             pdf.cell(0, 8, clean_str(row['Status']), 1, ln=True, align='C')
             
+        # Termo de Assinatura
         pdf.ln(10); pdf.set_font("Arial", 'I', 8)
-        pdf.multi_cell(0, 5, clean_str(get_cfg("ficha_descricao", "Declaro que recebi os EPIs acima listados.")))
+        pdf.multi_cell(0, 5, clean_str(get_cfg("ficha_descricao", "Declaro que recebi os EPIs acima listados e me comprometo a utilizá-nos no exercício das minhas funções.")))
+        
+        # Rodapé Oficial do HUC
+        pdf.ln(10)
+        pdf.set_font("Arial", '', 7)
+        pdf.cell(0, 5, clean_str(RODAPE_PADRAO), align='C')
+        
         return pdf.output(dest='S').encode('latin-1')
     except Exception as e:
         return None
@@ -152,13 +164,20 @@ def generate_pdf_balanco(df_group):
     try:
         pdf = FPDF()
         pdf.add_page()
+        
+        # Cabeçalho Oficial
         pdf.set_font("Arial", 'B', 14)
-        pdf.cell(0, 10, clean_str("BALANÇO SEMANAL DE CONSUMO - SESMT HUC"), ln=True, align='C'); pdf.ln(10)
+        pdf.cell(0, 8, clean_str(HOSPITAL_NAME), ln=True, align='C')
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(0, 5, clean_str(HOSPITAL_SUB), ln=True, align='C')
+        pdf.ln(5)
+        
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, clean_str("BALANÇO SEMANAL DE CONSUMO DE EPI"), ln=True, align='C'); pdf.ln(5)
         
         pdf.set_font("Arial", 'B', 10); pdf.set_fill_color(200, 200, 200)
-        pdf.cell(80, 8, "SETOR", 1, 0, 'C', True)
-        pdf.cell(80, 8, "EPI", 1, 0, 'C', True)
-        # CORREÇÃO: fill=True em vez de apenas True
+        pdf.cell(80, 8, "SETOR", 1, 0, 'C', fill=True)
+        pdf.cell(80, 8, "EPI", 1, 0, 'C', fill=True)
         pdf.cell(30, 8, "TOTAL QTD", 1, ln=True, align='C', fill=True)
         
         pdf.set_font("Arial", '', 9)
@@ -166,6 +185,12 @@ def generate_pdf_balanco(df_group):
             pdf.cell(80, 8, clean_str(row['Setor']), 1)
             pdf.cell(80, 8, clean_str(row['EPI']), 1)
             pdf.cell(30, 8, str(row['Quantidade']), 1, ln=True, align='C')
+            
+        # Rodapé Oficial do HUC
+        pdf.ln(15)
+        pdf.set_font("Arial", '', 7)
+        pdf.cell(0, 5, clean_str(RODAPE_PADRAO), align='C')
+        
         return pdf.output(dest='S').encode('latin-1')
     except: return None
 
@@ -251,7 +276,7 @@ elif menu == "🚀 Registrar Entrega":
                 st.cache_data.clear(); st.success(f"Registrado! Token: {tk}"); st.balloons()
 
 # ----------------------------------------------------------------------------
-# 5. FICHA INDIVIDUAL 
+# 5. FICHA INDIVIDUAL
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha de EPI por Funcionário")
@@ -289,11 +314,9 @@ elif menu == "📄 Ficha Individual":
                     file_name=f"Ficha_EPI_{target.replace(' ', '_')}.pdf",
                     mime="application/pdf"
                 )
-            else:
-                st.error("Erro ao gerar o arquivo PDF. Verifique caracteres especiais.")
 
 # ----------------------------------------------------------------------------
-# 6. BALANÇO SEMANAL 
+# 6. BALANÇO SEMANAL
 # ----------------------------------------------------------------------------
 elif menu == "📈 Balanço Semanal":
     st.title("📈 Resumo de Consumo (7 Dias)")
