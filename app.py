@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="SESMT HUC - Digital", layout="wide", page_icon="🛡️")
 
-# Suas chaves inseridas diretamente (erro de SyntaxError resolvido)
 SUPABASE_URL = "https://aatkjhtrafuepwzzlrbm.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdGtqaHRyYWZ1ZXB3enpscmJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2Mjg5MTYsImV4cCI6MjA5NDIwNDkxNn0.65izu7Zhc3kUZrVIRXGvVQ5o-Lhk-7PCK9CMg4zIwuk"
 
@@ -90,7 +89,8 @@ def get_config(key: str, default: str = "") -> str:
 @st.cache_data(ttl=2)
 def get_entregas_detalhadas():
     try:
-        res = supabase.table("entregas").select("*, oficiais(nome, setor), ep(nome, ca, validade)").execute()
+        # CORREÇÃO: Adicionado o campo 'whatsapp' na requisição da tabela 'oficiais'
+        res = supabase.table("entregas").select("*, oficiais(nome, setor, whatsapp), ep(nome, ca, validade)").execute()
         return res.data if res.data else []
     except: return []
 
@@ -225,7 +225,9 @@ if menu == "📊 Dashboard":
             nome_f = e['oficiais']['nome'] if e['oficiais'] else 'Desconhecido'
             nome_epi = e['ep']['nome'] if e['ep'] else 'Desconhecido'
             col1.write(f"🔴 **{nome_f}** | Falta assinar: {nome_epi} (Qtd: {e['quantidade']})")
-            zap = e['oficiais']['whatsapp'] if e['oficiais'] else ''
+            
+            # BLINDAGEM: Usando .get() para evitar o KeyError
+            zap = e['oficiais'].get('whatsapp', '') if e['oficiais'] else ''
             link = f"{get_config('url_sistema')}/?confirmar={e['token']}"
             msg = urllib.parse.quote(f"🛡️ *SESMT HUC*\nAssine o recebimento do seu EPI ({nome_epi}):\n{link}")
             col2.markdown(f'<a href="https://api.whatsapp.com/send?phone=55{zap}&text={msg}" target="_blank"><button style="background-color:#25D366; color:white; border:none; border-radius:5px; width:100%;">Reenviar Link</button></a>', unsafe_allow_html=True)
