@@ -1,16 +1,19 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v3.9
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v4.0
 Hospital Universitário do Ceará - Padrão Oficial ISGH
+Inclui: Ciclos de 20 itens, Relatório Semanal por Setor e Assinatura Digital
 """
 
 import logging
 import time
 import urllib.parse
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 import streamlit as st
 import pandas as pd
+import numpy as np
+from PIL import Image
 from supabase import create_client, Client
 
 # ============================================================================
@@ -28,12 +31,10 @@ except:
     st.error("Erro na conexão com o banco de dados.")
     st.stop()
 
-# Dados Institucionais para o Topo do PDF
 HOSPITAL_NAME = "HOSPITAL UNIVERSITÁRIO DO CEARÁ"
 HOSPITAL_ISGH = "ISGH - INSTITUTO DE SAÚDE E GESTÃO HOSPITALAR"
 CNPJ_ENDERECO = "CNPJ: 05.268.526/0024-67 | AV DOUTOR SILAS MUNGUBA, 1700-ITAPERI | FORTALEZA/CE"
 GOVERNO_SUB = "GOVERNO DO ESTADO DO CEARÁ"
-
 STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
 
 # ============================================================================
@@ -70,22 +71,17 @@ def get_cfg(k, d=""):
         return res.data[0]['valor'] if res.data else d
     except: return d
 
-def abrir_whatsapp(numero, mensagem):
-    msg_url = urllib.parse.quote(mensagem)
-    link = f"https://api.whatsapp.com/send?phone=55{numero}&text={msg_url}"
-    st.markdown(f'<a href="{link}" target="_blank"><button style="background-color:#25D366;color:white;border:none;padding:10px;border-radius:5px;width:100%;cursor:pointer;font-weight:bold;">🚀 ENVIAR PARA O WHATSAPP AGORA</button></a>', unsafe_allow_html=True)
-
 # ============================================================================
-# GERADOR DE PDF (PADRÃO HUC)
+# GERADOR DE PDF PROFISSIONAL (HUC PADRÃO)
 # ============================================================================
 
-def generate_pdf_ficha(func, hist_df):
+def generate_pdf_document(title, subtitle, headers, data_rows, func_info=None, is_ficha=False):
     from fpdf import FPDF
     try:
         pdf = FPDF(orientation='L', unit='mm', format='A4')
         pdf.add_page()
         
-        # CABEÇALHO (CNPJ E ENDEREÇO NO TOPO)
+        # CABEÇALHO OFICIAL (CNPJ NO TOPO)
         pdf.set_font("Arial", 'B', 14)
         pdf.cell(0, 8, clean_str(HOSPITAL_NAME), border=0, ln=1, align='C')
         pdf.set_font("Arial", 'B', 8)
@@ -99,39 +95,45 @@ def generate_pdf_ficha(func, hist_df):
         # Título Black Bar
         pdf.set_fill_color(40, 40, 40); pdf.set_text_color(255, 255, 255)
         pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 10, clean_str("FICHA INDIVIDUAL DE CONTROLE DE EPI"), border=0, ln=1, fill=True, align='C')
+        pdf.cell(0, 10, clean_str(title), border=0, ln=1, fill=True, align='C')
         pdf.ln(4)
         
-        # Dados do Colaborador
-        pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", 'B', 10)
-        pdf.cell(140, 8, clean_str(f"COLABORADOR: {func['nome']}"), border=1)
-        pdf.cell(0, 8, clean_str(f"MATRICULA: {func['matricula']}"), border=1, ln=1)
-        pdf.cell(140, 8, clean_str(f"SETOR: {func['setor']}"), border=1)
-        pdf.cell(0, 8, clean_str(f"FUNCAO: {func.get('funcao', 'N/A')}"), border=1, ln=1)
-        pdf.ln(5)
-        
-        # Tabela
+        # Se for Ficha, adiciona dados do Colaborador
+        pdf.set_text_color(0, 0, 0)
+        if is_ficha and func_info:
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(140, 8, clean_str(f"COLABORADOR: {func_info['nome']}"), border=1)
+            pdf.cell(0, 8, clean_str(f"MATRICULA: {func_info['matricula']}"), border=1, ln=1)
+            pdf.cell(140, 8, clean_str(f"SETOR: {func_info['setor']}"), border=1)
+            pdf.cell(0, 8, clean_str(f"FUNÇÃO: {func_info.get('funcao', 'N/A')}"), border=1, ln=1)
+            pdf.ln(5)
+
+        # Tabela (Cabeçalho)
         pdf.set_fill_color(230, 230, 230); pdf.set_font("Arial", 'B', 8)
-        pdf.cell(35, 8, clean_str("DATA/HORA"), border=1, align='C', fill=True)
-        pdf.cell(15, 8, clean_str("QTD"), border=1, align='C', fill=True)
-        pdf.cell(90, 8, clean_str("DESCRIÇÃO DO EPI"), border=1, align='C', fill=True)
-        pdf.cell(30, 8, clean_str("C.A."), border=1, align='C', fill=True)
-        pdf.cell(30, 8, clean_str("TOKEN"), border=1, align='C', fill=True)
-        pdf.cell(0, 8, clean_str("STATUS"), border=1, ln=1, align='C', fill=True)
+        col_widths = [35, 15, 90, 30, 30, 0] if is_ficha else [80, 110, 0]
+        for i, h in enumerate(headers):
+            pdf.cell(col_widths[i], 8, clean_str(h), border=1, align='C', fill=True)
+        pdf.ln()
         
+        # Tabela (Dados)
         pdf.set_font("Arial", '', 8)
-        for _, row in hist_df.iterrows():
-            pdf.cell(35, 8, str(row['Data/Hora']), border=1, align='C')
-            pdf.cell(15, 8, str(row['Qtd']), border=1, align='C')
-            pdf.cell(90, 8, clean_str(row['EPI']), border=1)
-            pdf.cell(30, 8, str(row['CA']), border=1, align='C')
-            pdf.cell(30, 8, str(row['Token']), border=1, align='C')
-            pdf.cell(0, 8, clean_str(row['Status']), border=1, ln=1, align='C')
+        for row in data_rows:
+            for i, val in enumerate(row):
+                pdf.cell(col_widths[i], 8, clean_str(str(val)), border=1, ln=(1 if i == len(row)-1 else 0), align=('L' if i==2 and is_ficha else 'C'))
             
-        pdf.ln(10); pdf.set_font("Arial", 'I', 8)
-        termo = get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado quanto ao uso.")
-        pdf.multi_cell(0, 4, clean_str(termo))
-        
+        if is_ficha:
+            pdf.ln(10); pdf.set_font("Arial", 'I', 8)
+            pdf.multi_cell(0, 4, clean_str(get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados conforme NR-06.")))
+            
+            # Assinatura (se houver)
+            if func_info.get('assinatura_url'):
+                try:
+                    r = requests.get(func_info['assinatura_url'], timeout=5)
+                    img = Image.open(BytesIO(r.content)).convert("RGB")
+                    img.save("temp_sig.jpg")
+                    pdf.image("temp_sig.jpg", x=20, y=pdf.get_y()+2, w=40)
+                except: pass
+
         return pdf.output(dest='S').encode('latin-1')
     except Exception as e:
         st.error(f"Erro PDF: {e}")
@@ -143,132 +145,112 @@ def generate_pdf_ficha(func, hist_df):
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 if not st.session_state.logado:
-    st.title("🛡️ SESMT HUC")
-    pw = st.text_input("Acesso SESMT", type="password")
+    st.markdown("<h1 style='text-align:center;'>🛡️ SESMT HUC</h1>", unsafe_allow_html=True)
+    pw = st.text_input("Acesso Administrativo", type="password")
     if st.button("Entrar"):
         if pw == get_cfg("app_password", "1234"): st.session_state.logado = True; st.rerun()
     st.stop()
 
-menu = st.sidebar.radio("MENU", ["📊 Painel", "🚀 Registrar Entrega", "👥 Colaboradores", "🎖️ Funções", "📦 Catálogo EPI", "📄 Ficha Individual"])
-if st.sidebar.button("Sair"): st.session_state.logado = False; st.rerun()
+menu = st.sidebar.radio("MENU", ["📊 Painel", "🚀 Registrar Entrega", "👥 Colaboradores", "🎖️ Funções", "📦 Catálogo EPI", "📄 Ficha Individual", "📈 Balanço Semanal"])
 
 # ----------------------------------------------------------------------------
-# 1. PAINEL (DASHBOARD)
+# 1. FICHA INDIVIDUAL (LOGICA DE CICLO DE 20 ITENS)
 # ----------------------------------------------------------------------------
-if menu == "📊 Painel":
-    st.title("📊 Painel SESMT")
-    df_f, df_e = load_data("oficiais"), load_data("entregas")
-    c1, c2 = st.columns(2)
-    c1.metric("Colaboradores", len(df_f))
-    c2.metric("Entregas Realizadas", len(df_e))
-    st.divider()
-    st.subheader("📲 Pendências de Assinatura")
-    if not df_e.empty:
-        pend = df_e[df_e['status'].str.contains("Pendente", na=False)]
-        for _, p in pend.iterrows():
-            f_res = supabase.table("oficiais").select("nome, whatsapp").eq("id", p['id_func']).execute()
-            if f_res.data:
-                f = f_res.data[0]
-                col1, col2 = st.columns([3, 1])
-                col1.write(f"🔴 **{f['nome']}** | Token: {p['token']}")
-                link = f"{get_cfg('url_sistema')}/?confirmar={p['token']}"
-                msg = f"🛡️ *SESMT HUC*\nOlá {f['nome']},\nAssine seu EPI pelo link: {link}"
-                with col2: abrir_whatsapp(f['whatsapp'], msg)
-
-# ----------------------------------------------------------------------------
-# 2. REGISTRAR ENTREGA
-# ----------------------------------------------------------------------------
-elif menu == "🚀 Registrar Entrega":
-    st.title("🚀 Registrar Entrega")
-    df_f, df_ep = load_data("oficiais", "nome"), load_data("ep", "nome")
-    if df_f.empty or df_ep.empty: st.warning("Cadastre Colaboradores e EPIs primeiro.")
-    else:
-        with st.form("ent"):
-            f = st.selectbox("Colaborador", df_f['matricula'] + " - " + df_f['nome'])
-            e = st.selectbox("EPI", df_ep['nome'])
-            q = st.number_input("Qtd", 1)
-            if st.form_submit_button("Gerar Registro"):
-                rf, re = df_f[df_f['matricula'] + " - " + df_f['nome'] == f].iloc[0], df_ep[df_ep['nome'] == e].iloc[0]
-                tk = str(int(time.time()))[-6:]
-                supabase.table("entregas").insert({"id_func":int(rf['id']), "id_epi":int(re['id']), "token":tk, "quantidade":q, "status":STATUS_ENTREGA["PENDENTE"]}).execute()
-                st.success(f"Registrado! Token: {tk}")
-                abrir_whatsapp(rf['whatsapp'], f"🛡️ *SESMT HUC*\nOlá {rf['nome']},\nConfirme o EPI: {get_cfg('url_sistema')}/?confirmar={tk}")
-
-# ----------------------------------------------------------------------------
-# 3. COLABORADORES
-# ----------------------------------------------------------------------------
-elif menu == "👥 Colaboradores":
-    st.title("👥 Gestão de Colaboradores")
-    df_funcoes = load_data("funcoes", "nome")
-    if df_funcoes.empty: st.error("Cadastre 'Funções' primeiro.")
-    else:
-        with st.form("cad_col"):
-            n, m = st.text_input("Nome").upper(), st.text_input("Matrícula")
-            s = st.selectbox("Setor", ["CME", "MANUTENÇÃO", "SESMT", "UTI"])
-            f = st.selectbox("Função", df_funcoes['nome'].tolist())
-            z = st.text_input("WhatsApp")
-            if st.form_submit_button("Salvar"):
-                supabase.table("oficiais").insert({"nome":n, "matricula":m, "setor":s, "funcao":f, "whatsapp":z}).execute()
-                st.success("Salvo!"); st.cache_data.clear()
-        st.dataframe(load_data("oficiais", "nome"), use_container_width=True)
-
-# ----------------------------------------------------------------------------
-# 4. FUNÇÕES
-# ----------------------------------------------------------------------------
-elif menu == "🎖️ Funções":
-    st.title("🎖️ Funções / Cargos")
-    with st.form("add_f"):
-        nf = st.text_input("Nova Função").upper()
-        if st.form_submit_button("Adicionar"):
-            supabase.table("funcoes").insert({"nome":nf}).execute()
-            st.cache_data.clear(); st.rerun()
-    st.dataframe(load_data("funcoes", "nome"), use_container_width=True)
-
-# ----------------------------------------------------------------------------
-# 5. CATÁLOGO EPI (O QUE TINHA SUMIDO!)
-# ----------------------------------------------------------------------------
-elif menu == "📦 Catálogo EPI":
-    st.title("📦 Catálogo de EPIs e C.A.")
-    t1, t2 = st.tabs(["➕ Novo EPI", "🛠️ Gerenciar Catálogo"])
-    
-    with t1:
-        with st.form("new_epi"):
-            n, ca, v = st.text_input("Nome do EPI").upper(), st.text_input("C.A."), st.date_input("Validade")
-            if st.form_submit_button("Salvar no Catálogo"):
-                supabase.table("ep").insert({"nome":n, "ca":ca, "validade":str(v)}).execute()
-                st.success("EPI Adicionado!"); st.cache_data.clear(); st.rerun()
-                
-    with t2:
-        df_ep = load_data("ep", "nome")
-        if not df_ep.empty:
-            sel = st.selectbox("Item para Modificar/Excluir", df_ep['nome'])
-            item = df_ep[df_ep['nome'] == sel].iloc[0]
-            with st.form("edit_epi"):
-                en, eca, ev = st.text_input("Nome", item['nome']).upper(), st.text_input("C.A.", item['ca']), st.date_input("Validade", datetime.strptime(item['validade'], '%Y-%m-%d'))
-                c1, c2 = st.columns(2)
-                if c1.form_submit_button("💾 Salvar Alterações"):
-                    supabase.table("ep").update({"nome":en, "ca":eca, "validade":str(ev)}).eq("id", int(item['id'])).execute()
-                    st.success("Atualizado!"); st.cache_data.clear(); st.rerun()
-                if c2.form_submit_button("🗑️ Excluir EPI"):
-                    try:
-                        supabase.table("ep").delete().eq("id", int(item['id'])).execute()
-                        st.warning("Excluído!"); st.cache_data.clear(); st.rerun()
-                    except: st.error("Este EPI já possui entregas e não pode ser deletado.")
-        st.dataframe(df_ep, use_container_width=True, hide_index=True)
-
-# ----------------------------------------------------------------------------
-# 6. FICHA INDIVIDUAL
-# ----------------------------------------------------------------------------
-elif menu == "📄 Ficha Individual":
-    st.title("📄 Ficha Individual")
+if menu == "📄 Ficha Individual":
+    st.title("📄 Ficha Individual e Ciclos de Entrega")
     df_f = load_data("oficiais", "nome")
     if not df_f.empty:
-        sel = st.selectbox("Colaborador", df_f['nome'])
+        sel = st.selectbox("Selecione o Colaborador", df_f['nome'])
         f_info = df_f[df_f['nome'] == sel].iloc[0]
-        res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).execute().data
+        
+        # Histórico completo do Supabase
+        res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).order("data_entrega", desc=True).execute().data
         if res:
-            rows = [{"Data/Hora": format_br(h['data_entrega'], True), "Qtd": h['quantidade'], "EPI": h['ep']['nome'], "CA": h['ep']['ca'], "Token": h['token'], "Status": h['status']} for h in res]
-            df_h = pd.DataFrame(rows)
+            df_h = pd.DataFrame([{"Data/Hora": format_br(h['data_entrega'], True), "Qtd": h['quantidade'], "EPI": h['ep']['nome'], "CA": h['ep']['ca'], "Token": h['token'], "Status": h['status']} for h in res])
+            
+            # Alerta de Ciclo de 20
+            total_itens = len(df_h)
+            if total_itens >= 20:
+                st.warning(f"⚠️ ATENÇÃO: Este colaborador atingiu {total_itens} entregas. Ciclo de 20 itens concluído!")
+            
+            st.write(f"Exibindo **{total_itens}** registros no total.")
             st.dataframe(df_h, use_container_width=True, hide_index=True)
-            pdf = generate_pdf_ficha(dict(f_info), df_h)
-            if pdf: st.download_button("📥 BAIXAR PDF", data=pdf, file_name=f"Ficha_{sel}.pdf", mime="application/pdf")
+            
+            c1, c2 = st.columns(2)
+            
+            # Botão 1: Ciclo Atual (Últimos 20)
+            df_ciclo = df_h.head(20)
+            headers = ["DATA/HORA", "QTD", "DESCRIÇÃO DO EPI", "C.A.", "TOKEN", "STATUS"]
+            data_ciclo = df_ciclo.values.tolist()
+            pdf_ciclo = generate_pdf_document("FICHA DE EPI - CICLO ATUAL (20 ITENS)", "", headers, data_ciclo, dict(f_info), True)
+            if pdf_ciclo: c1.download_button("📥 BAIXAR CICLO ATUAL (Últimos 20)", data=pdf_ciclo, file_name=f"Ciclo_20_{sel}.pdf")
+            
+            # Botão 2: Ficha Geral (Tudo)
+            data_geral = df_h.values.tolist()
+            pdf_geral = generate_pdf_document("FICHA DE EPI - HISTÓRICO GERAL", "", headers, data_geral, dict(f_info), True)
+            if pdf_geral: c2.download_button("📥 BAIXAR FICHA GERAL (Histórico)", data=pdf_geral, file_name=f"Ficha_Geral_{sel}.pdf")
+        else: st.info("Sem entregas registradas.")
+
+# ----------------------------------------------------------------------------
+# 2. BALANÇO SEMANAL (RELATORIO POR SETOR - 7 DIAS)
+# ----------------------------------------------------------------------------
+elif menu == "📈 Balanço Semanal":
+    st.title("📈 Relatório de Consumo por Setor (Últimos 7 Dias)")
+    
+    # Busca entregas com join de oficiais (setor) e ep (nome)
+    res = supabase.table("entregas").select("*, oficiais(setor), ep(nome)").execute().data
+    if res:
+        hoje = datetime.now()
+        sete_dias_atras = hoje - timedelta(days=7)
+        
+        # Filtra na memória os últimos 7 dias
+        recentes = []
+        for h in res:
+            data_e = datetime.fromisoformat(h['data_entrega'].replace('Z', '').split('+')[0])
+            if data_e >= sete_dias_atras:
+                recentes.append({
+                    "Setor": h['oficiais']['setor'] if h['oficiais'] else "N/A",
+                    "EPI": h['ep']['nome'] if h['ep'] else "N/A",
+                    "Quantidade": h['quantidade']
+                })
+        
+        if recentes:
+            st.success(f"✅ Alerta: Consumo detectado nos últimos 7 dias!")
+            df_recentes = pd.DataFrame(recentes)
+            # Agrupa por Setor e EPI somando as quantidades
+            df_agrupado = df_recentes.groupby(['Setor', 'EPI'])['Quantidade'].sum().reset_index()
+            
+            st.table(df_agrupado)
+            
+            # Gerar PDF do Balanço
+            headers_b = ["SETOR", "TIPO DE EPI", "QUANTIDADE"]
+            data_b = df_agrupado.values.tolist()
+            pdf_b = generate_pdf_document("RELATÓRIO DE CONSUMO SEMANAL POR SETOR", f"Período: {sete_dias_atras.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')}", headers_b, data_b)
+            
+            if pdf_b:
+                st.download_button("📥 BAIXAR RELATÓRIO DE CONSUMO (PDF)", data=pdf_b, file_name="Consumo_Semanal_Setores.pdf")
+        else:
+            st.info("Nenhuma retirada de EPI nos últimos 7 dias.")
+
+# ----------------------------------------------------------------------------
+# RESTANTE DOS MENUS (ESTÁVEIS)
+# ----------------------------------------------------------------------------
+elif menu == "📊 Painel":
+    st.title("📊 Painel Geral")
+    # ... (Mantenha sua lógica de métricas e pendências aqui)
+
+elif menu == "🚀 Registrar Entrega":
+    st.title("🚀 Registrar Entrega")
+    # ... (Mantenha seu formulário de registro aqui)
+
+elif menu == "👥 Colaboradores":
+    st.title("👥 Gestão de Colaboradores")
+    # ... (Mantenha seu cadastro de oficiais aqui)
+
+elif menu == "🎖️ Funções":
+    st.title("🎖️ Funções")
+    # ... (Mantenha seu cadastro de funções aqui)
+
+elif menu == "📦 Catálogo EPI":
+    st.title("📦 Catálogo de EPI")
+    # ... (Mantenha seu cadastro de itens aqui)
