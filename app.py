@@ -21,13 +21,9 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="SESMT HUC - Digital", layout="wide", page_icon="🛡️")
 
-try:
-    SUPABASE_URL = "https://aatkjhtrafuepwzzlrbm.supabase.co"
+# Suas chaves inseridas diretamente (erro de SyntaxError resolvido)
+SUPABASE_URL = "https://aatkjhtrafuepwzzlrbm.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdGtqaHRyYWZ1ZXB3enpscmJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2Mjg5MTYsImV4cCI6MjA5NDIwNDkxNn0.65izu7Zhc3kUZrVIRXGvVQ5o-Lhk-7PCK9CMg4zIwuk"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except KeyError:
-    st.error("❌ Erro: Chaves do Supabase não encontradas em 'Secrets'!")
-    st.stop()
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -49,7 +45,7 @@ def format_br(date_str: str, include_time=False) -> str:
         dt = datetime.fromisoformat(str(date_str).replace('Z', '+00:00'))
         return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
     except:
-        try: # Fallback for simple dates
+        try: 
             return datetime.strptime(str(date_str).split('T')[0], '%Y-%m-%d').strftime('%d/%m/%Y')
         except: return str(date_str)
 
@@ -94,7 +90,6 @@ def get_config(key: str, default: str = "") -> str:
 @st.cache_data(ttl=2)
 def get_entregas_detalhadas():
     try:
-        # Puxa as entregas com os dados do funcionário e do EPI interligados
         res = supabase.table("entregas").select("*, oficiais(nome, setor), ep(nome, ca, validade)").execute()
         return res.data if res.data else []
     except: return []
@@ -104,19 +99,16 @@ def get_entregas_detalhadas():
 # ============================================================================
 
 def create_pdf_ficha(f: dict, df: pd.DataFrame) -> bytes:
-    """Gera a Ficha de EPI do Funcionário (Modo Paisagem para caber tudo)"""
     try:
         from fpdf import FPDF
-        pdf = FPDF(orientation='L') # L = Landscape (Deitado)
+        pdf = FPDF(orientation='L') 
         pdf.add_page()
         
-        # Cabeçalho
         pdf.set_font("Arial", 'B', 14)
         pdf.cell(0, 8, HOSPITAL_NAME, ln=True, align='C')
         pdf.set_font("Arial", '', 10)
         pdf.cell(0, 5, f"CNPJ: {CNPJ_HUC}", ln=True, align='C'); pdf.ln(5)
         
-        # Dados do Funcionário
         pdf.set_fill_color(230, 230, 230); pdf.set_font("Arial", 'B', 11)
         pdf.cell(0, 8, remove_accents(f"FICHA DE EPI - {f['nome'].upper()}"), ln=True, fill=True); pdf.ln(2)
         pdf.set_font("Arial", 'B', 9)
@@ -125,13 +117,11 @@ def create_pdf_ficha(f: dict, df: pd.DataFrame) -> bytes:
         pdf.cell(130, 6, f"SETOR: {remove_accents(f.get('setor', 'N/A'))}", 0)
         pdf.cell(100, 6, f"VINCULO: {remove_accents(f.get('vinculo', 'N/A'))}", ln=True); pdf.ln(5)
         
-        # Tabela de EPIs (Colunas ajustadas para caber Data, Hora e Validade)
         pdf.set_font("Arial", 'B', 7); pdf.set_fill_color(200, 200, 200)
         headers = [("DATA E HORA", 28), ("QTD", 10), ("DESCRIÇÃO DO EPI", 80), ("C.A.", 20), ("VAL. C.A.", 22), ("TOKEN", 22), ("STATUS / ASSINATURA", 45)]
         for txt, w in headers: pdf.cell(w, 8, txt, 1, 0, 'C', fill=True)
         pdf.ln()
         
-        # Linhas de Dados
         pdf.set_font("Arial", '', 7)
         for _, r in df.iterrows():
             pdf.cell(28, 8, str(r.get('data_hora', '')), 1, 0, 'C')
@@ -142,7 +132,6 @@ def create_pdf_ficha(f: dict, df: pd.DataFrame) -> bytes:
             pdf.cell(22, 8, str(r.get('token', '')), 1, 0, 'C')
             pdf.cell(45, 8, remove_accents(str(r.get('status', ''))), 1, ln=True, align='C')
         
-        # Termos Legais no Rodapé
         pdf.ln(8); pdf.set_font("Arial", 'I', 8)
         pdf.multi_cell(0, 5, remove_accents(get_config("ficha_descricao", "")), align='J')
         return pdf.output(dest='S').encode('utf-8')
@@ -150,7 +139,6 @@ def create_pdf_ficha(f: dict, df: pd.DataFrame) -> bytes:
         logger.error(f"Erro PDF Ficha: {e}"); return None
 
 def create_pdf_consumo(df: pd.DataFrame, data_ref: str) -> bytes:
-    """Gera o PDF de Balanço Semanal por Setor"""
     try:
         from fpdf import FPDF
         pdf = FPDF()
@@ -211,7 +199,6 @@ if menu == "📊 Dashboard":
     c3.metric("⏳ Assinaturas Pendentes", pendentes, delta_color="inverse")
     st.divider()
     
-    # RADAR DE C.A. VENCENDO
     st.subheader("🚨 Radar de Validade (C.A.)")
     df_cat = get_table_data("ep")
     alertas_ca = 0
@@ -233,7 +220,7 @@ if menu == "📊 Dashboard":
     pendentes_list = [e for e in entregas_all if e['status'] == STATUS_ENTREGA["PENDENTE"]]
     if not pendentes_list: st.info("Tudo assinado! Nenhuma pendência.")
     else:
-        for e in pendentes_list[:10]: # Mostra os 10 mais recentes
+        for e in pendentes_list[:10]:
             col1, col2 = st.columns([4, 1])
             nome_f = e['oficiais']['nome'] if e['oficiais'] else 'Desconhecido'
             nome_epi = e['ep']['nome'] if e['ep'] else 'Desconhecido'
@@ -345,14 +332,12 @@ elif menu == "📄 Ficha de EPI":
     
     if not hist_func: st.info(f"Nenhuma retirada registrada para {sel}.")
     else:
-        # Alerta de 20 Dias
         hist_func.sort(key=lambda x: x['data_entrega'], reverse=True)
         dias_sem_assinar = dias_desde(hist_func[0]['data_entrega'])
         if dias_sem_assinar >= 20:
             st.warning(f"⚠️ **ALERTA DE SEGURANÇA:** Este colaborador está há {dias_sem_assinar} dias sem gerar uma nova ficha. Atualize o arquivo físico/digital!")
         else: st.success(f"Ficha atualizada (Última movimentação há {dias_sem_assinar} dias).")
         
-        # Monta DataFrame Limpo para o PDF e Tela
         lista_limpa = []
         for e in hist_func:
             lista_limpa.append({
@@ -367,7 +352,6 @@ elif menu == "📄 Ficha de EPI":
         df_hist = pd.DataFrame(lista_limpa)
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
         
-        # Botão Download PDF Paisagem
         pdf = create_pdf_ficha(dict(func_dados), df_hist)
         if pdf: st.download_button("📥 BAIXAR FICHA DE EPI (PDF)", data=pdf, file_name=f"Ficha_EPI_{sel.replace(' ', '_')}.pdf", mime="application/pdf")
 
@@ -380,20 +364,17 @@ elif menu == "📈 Consumo Semanal":
     entregas_all = get_entregas_detalhadas()
     if not entregas_all: st.info("Sem dados de entrega ainda."); st.stop()
     
-    # Lógica do Alerta de 7 Dias
     entregas_all.sort(key=lambda x: x['data_entrega'], reverse=True)
     dias_ultimo_registro = dias_desde(entregas_all[0]['data_entrega'])
     if dias_ultimo_registro >= 7:
         st.error(f"🚨 **COBRANÇA:** Fazem {dias_ultimo_registro} dias desde o último balanço. Gere o PDF de consumo da semana!")
     else: st.success(f"Balanço em dia! Faltam {7 - dias_ultimo_registro} dias para o próximo fechamento.")
     
-    # Filtra os últimos 7 dias para o relatório
     limite_data = datetime.now() - timedelta(days=7)
     recentes = [e for e in entregas_all if datetime.fromisoformat(e['data_entrega'].replace('Z', '+00:00')).replace(tzinfo=None) >= limite_data]
     
     if not recentes: st.info("Nenhuma entrega nos últimos 7 dias.")
     else:
-        # Agrupamento (Ex: 10 Luvas para Manutenção)
         lista_agrupada = []
         for e in recentes:
             lista_agrupada.append({
