@@ -58,7 +58,6 @@ if "confirmar" in st.query_params:
 def format_br(date_str, include_time=False):
     if not date_str: return "N/A"
     try:
-        # Tenta converter diversos formatos de data do Supabase
         clean_date = str(date_str).replace('Z', '').split('+')[0]
         dt = datetime.fromisoformat(clean_date)
         return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
@@ -71,7 +70,6 @@ def remove_accents(text):
     return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
 
 def clean_str(text):
-    """Limpa strings para evitar erros no PDF"""
     return remove_accents(str(text)).encode('latin-1', 'replace').decode('latin-1')
 
 # ============================================================================
@@ -90,7 +88,6 @@ def load_data(table, order=None):
 @st.cache_data(ttl=2)
 def get_full_history():
     try:
-        # Busca entregas trazendo dados das tabelas relacionadas
         res = supabase.table("entregas").select("*, oficiais(*), ep(*)").execute()
         return res.data if res.data else []
     except: return []
@@ -124,7 +121,6 @@ def generate_pdf_ficha(func, hist_df):
         pdf.cell(140, 7, clean_str(f"SETOR: {func['setor']}"), 0)
         pdf.cell(0, 7, clean_str(f"FUNÇÃO: {func['funcao']}"), ln=True); pdf.ln(5)
         
-        # Tabela
         pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(200, 200, 200)
         pdf.cell(35, 8, "DATA/HORA", 1, 0, 'C', True)
         pdf.cell(15, 8, "QTD", 1, 0, 'C', True)
@@ -132,7 +128,8 @@ def generate_pdf_ficha(func, hist_df):
         pdf.cell(25, 8, "C.A.", 1, 0, 'C', True)
         pdf.cell(30, 8, clean_str("VALID. C.A."), 1, 0, 'C', True)
         pdf.cell(30, 8, "TOKEN", 1, 0, 'C', True)
-        pdf.cell(0, 8, "STATUS", 1, ln=True, align='C', True)
+        # CORREÇÃO: fill=True em vez de apenas True
+        pdf.cell(0, 8, "STATUS", 1, ln=True, align='C', fill=True)
         
         pdf.set_font("Arial", '', 8)
         for _, row in hist_df.iterrows():
@@ -161,7 +158,8 @@ def generate_pdf_balanco(df_group):
         pdf.set_font("Arial", 'B', 10); pdf.set_fill_color(200, 200, 200)
         pdf.cell(80, 8, "SETOR", 1, 0, 'C', True)
         pdf.cell(80, 8, "EPI", 1, 0, 'C', True)
-        pdf.cell(30, 8, "TOTAL QTD", 1, ln=True, align='C', True)
+        # CORREÇÃO: fill=True em vez de apenas True
+        pdf.cell(30, 8, "TOTAL QTD", 1, ln=True, align='C', fill=True)
         
         pdf.set_font("Arial", '', 9)
         for _, row in df_group.iterrows():
@@ -244,7 +242,7 @@ elif menu == "🚀 Registrar Entrega":
             if st.form_submit_button("Confirmar Entrega"):
                 row_f = df_f[df_f['matricula'] + " - " + df_f['nome'] == f_sel].iloc[0]
                 row_e = df_e[df_e['nome'] == e_sel].iloc[0]
-                tk = str(int(time.time()))[-6:] # Token baseado no tempo
+                tk = str(int(time.time()))[-6:] 
                 
                 supabase.table("entregas").insert({
                     "id_func": int(row_f['id']), "id_epi": int(row_e['id']),
@@ -253,7 +251,7 @@ elif menu == "🚀 Registrar Entrega":
                 st.cache_data.clear(); st.success(f"Registrado! Token: {tk}"); st.balloons()
 
 # ----------------------------------------------------------------------------
-# 5. FICHA INDIVIDUAL (O QUE VOCÊ PEDIU)
+# 5. FICHA INDIVIDUAL 
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha de EPI por Funcionário")
@@ -264,7 +262,6 @@ elif menu == "📄 Ficha Individual":
         f_info = df_f[df_f['nome'] == target].iloc[0]
         
         history = get_full_history()
-        # Filtro robusto
         my_hist = [h for h in history if h['oficiais'] and h['oficiais']['id'] == f_info['id']]
         
         if not my_hist:
@@ -284,7 +281,6 @@ elif menu == "📄 Ficha Individual":
             df_display = pd.DataFrame(rows)
             st.dataframe(df_display, use_container_width=True, hide_index=True)
             
-            # Geração do PDF
             pdf_data = generate_pdf_ficha(dict(f_info), df_display)
             if pdf_data:
                 st.download_button(
@@ -297,7 +293,7 @@ elif menu == "📄 Ficha Individual":
                 st.error("Erro ao gerar o arquivo PDF. Verifique caracteres especiais.")
 
 # ----------------------------------------------------------------------------
-# 6. BALANÇO SEMANAL (O QUE VOCÊ PEDIU)
+# 6. BALANÇO SEMANAL 
 # ----------------------------------------------------------------------------
 elif menu == "📈 Balanço Semanal":
     st.title("📈 Resumo de Consumo (7 Dias)")
@@ -305,7 +301,6 @@ elif menu == "📈 Balanço Semanal":
     
     if not history: st.info("Sem dados para exibir.")
     else:
-        # Filtro de 7 dias simplificado
         lista_semanal = []
         hoje = datetime.now()
         for h in history:
@@ -330,7 +325,7 @@ elif menu == "📈 Balanço Semanal":
                 st.download_button("📥 BAIXAR RESUMO SEMANAL (PDF)", data=pdf_bal, file_name="Resumo_Consumo_HUC.pdf", mime="application/pdf")
 
 # ----------------------------------------------------------------------------
-# RESTANTE DO CÓDIGO (COMO ANTES)
+# RESTANTE DO CÓDIGO
 # ----------------------------------------------------------------------------
 elif menu == "👥 Colaboradores":
     st.title("👥 Gestão de Pessoal")
