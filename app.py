@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 st.set_page_config(page_title="SESMT HUC - Digital", layout="wide", page_icon="🛡️")
 
 try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    SUPABASE_URL = "https://aatkjhtrafuepwzzlrbm.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdGtqaHRyYWZ1ZXB3enpscmJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2Mjg5MTYsImV4cCI6MjA5NDIwNDkxNn0.65izu7Zhc3kUZrVIRXGvVQ5o-Lhk-7PCK9CMg4zIwuk"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except KeyError:
     st.error("❌ Erro: Chaves do Supabase não encontradas em 'Secrets'!")
     st.stop()
