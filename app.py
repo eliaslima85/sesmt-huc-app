@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.11 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.12 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -56,6 +56,9 @@ HOSPITAL_ISGH = "ISGH - INSTITUTO DE SAÚDE E GESTÃO HOSPITALAR"
 CNPJ_ENDERECO = "CNPJ: 05.268.526/0024-67 | AV DOUTOR SILAS MUNGUBA, 1700-ITAPERI | FORTALEZA/CE | CEP: 60.714-242"
 GOVERNO_SUB = "GOVERNO DO ESTADO DO CEARÁ"
 STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
+
+if 'carrinho_epi' not in st.session_state:
+    st.session_state.carrinho_epi = []
 
 # ============================================================================
 # 🛠️ UTILITÁRIOS E TRATAMENTO DE ERROS DO SUPABASE
@@ -114,7 +117,7 @@ def abrir_whatsapp(numero, mensagem):
     st.markdown(f'<a href="{link}" target="_blank"><button style="background-color:#25D366;color:white;border:none;padding:10px;border-radius:5px;width:100%;cursor:pointer;font-weight:bold;">🚀 ENVIAR PARA WHATSAPP</button></a>', unsafe_allow_html=True)
 
 # ============================================================================
-# 📲 LINK DO WHATSAPP: CONFIRMAÇÃO DE TOKEN E CAPTURA INTELIGENTE
+# 📲 LINK DO WHATSAPP: CONFIRMAÇÃO DE TOKEN COM MÚLTIPLOS ITENS
 # ============================================================================
 
 if "confirmar" in st.query_params:
@@ -122,21 +125,24 @@ if "confirmar" in st.query_params:
     if tk:
         ent_res = supabase.table("entregas").select("*, oficiais(*)").eq("token", tk).execute()
         if ent_res.data:
-            entrega = ent_res.data[0]
-            func = entrega['oficiais']
-            epi_res = supabase.table("ep").select("nome, ca").eq("id", entrega['id_epi']).execute()
-            epi_nome = epi_res.data[0]['nome'] if epi_res.data else "EPI"
+            func = ent_res.data[0]['oficiais']
             
             st.title("🛡️ Confirmação Digital de EPI - SESMT HUC")
             st.write(f"**COLABORADOR:** {func['nome']} | **Matrícula:** {func['matricula']}")
-            st.write(f"**Item Recebido:** {epi_nome} | **Quantidade:** {entrega['quantidade']}")
+            
+            st.write("📦 **ITENS RECEBIDOS NESTA ENTREGA:**")
+            for e in ent_res.data:
+                epi_res = supabase.table("ep").select("nome, ca").eq("id", e['id_epi']).execute()
+                epi_nome = epi_res.data[0]['nome'] if epi_res.data else "EPI"
+                st.write(f"- {e['quantidade']}x {epi_nome} (C.A: {epi_res.data[0].get('ca', 'N/A')})")
+                
             st.divider()
             
             if not func.get('assinatura_url'):
                 st.warning("📝 Esta é sua primeira confirmação eletrônica. Desenhe sua assinatura na tela abaixo para salvá-la em sua ficha definitiva.")
                 canvas_zap = st_canvas(stroke_width=2, stroke_color="#000", background_color="#eee", height=140, width=340, key="canvas_zap")
                 
-                if st.button("✍️ Gravar Assinatura e Confirmar", use_container_width=True, type="primary"):
+                if st.button("✍️ Gravar Assinatura e Confirmar Todos", use_container_width=True, type="primary"):
                     if canvas_zap.image_data is not None:
                         img = Image.fromarray(canvas_zap.image_data.astype('uint8'), 'RGBA')
                         buffered = BytesIO()
@@ -155,13 +161,13 @@ if "confirmar" in st.query_params:
                             
                             supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
                             st.balloons()
-                            st.success("✅ ASSINATURA REGISTRADA E EPI CONFIRMADO COM SUCESSO!")
+                            st.success("✅ ASSINATURA REGISTRADA E PACOTE DE EPIs CONFIRMADO COM SUCESSO!")
                             time.sleep(2); st.query_params.clear(); st.rerun()
                         except Exception as upload_err:
                             st.error(f"⚠️ Erro de armazenamento na nuvem. Detalhes: {upload_err}")
             else:
                 st.success("✨ Sua assinatura digital master já está vinculada de forma segura ao seu prontuário.")
-                if st.button("👍 Confirmar Recebimento deste EPI", use_container_width=True, type="primary"):
+                if st.button("👍 Confirmar Recebimento do Pacote", use_container_width=True, type="primary"):
                     supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
                     st.balloons()
                     st.success("🛡️ RECEBIMENTO VALIDADO COM SUCESSO!")
@@ -268,7 +274,7 @@ menu = st.sidebar.radio("SESMT MENU", [
 if st.sidebar.button("Sair do Sistema"): st.session_state.logado = False; st.rerun()
 
 # ----------------------------------------------------------------------------
-# 1. 📊 PAINEL
+# 1. 📊 PAINEL (AGRUPADO POR TOKEN DE ENTREGA)
 # ----------------------------------------------------------------------------
 if menu == "📊 Painel":
     st.title("📊 Indicadores e Controles Operacionais")
@@ -276,75 +282,125 @@ if menu == "📊 Painel":
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Colaboradores", len(df_f))
     c2.metric("Total Entregas Realizadas", len(df_e))
-    pendentes = df_e[df_e['status'].str.contains("Pendente", na=False)] if not df_e.empty else []
-    c3.metric("Aguardando Confirmação", len(pendentes))
+    
+    pendentes = df_e[df_e['status'].str.contains("Pendente", na=False)] if not df_e.empty else pd.DataFrame()
+    
+    # O dashboard agora conta por lote/token único, e não cada linha individual para não repetir
+    tokens_pendentes = pendentes['token'].nunique() if not pendentes.empty else 0
+    c3.metric("Lotes Aguardando Confirmação", tokens_pendentes)
     
     st.divider()
     st.subheader("📲 Pendências de Assinatura Eletrônica")
-    if len(pendentes) > 0:
-        for _, p in pendentes.iterrows():
-            f_res = supabase.table("oficiais").select("nome, whatsapp").eq("id", p['id_func']).execute()
-            epi_res = supabase.table("ep").select("nome").eq("id", p['id_epi']).execute()
-            epi_nome = epi_res.data[0]['nome'] if epi_res.data else "EPI"
+    if not pendentes.empty:
+        # Agrupamento lógico: junta todos os EPIs de um mesmo token na mesma mensagem
+        for tk_pendente, df_tk in pendentes.groupby('token'):
+            f_id = df_tk.iloc[0]['id_func']
+            f_res = supabase.table("oficiais").select("nome, whatsapp").eq("id", int(f_id)).execute()
             
             if f_res.data:
                 f = f_res.data[0]
+                
+                nomes_epis = []
+                for _, row_tk in df_tk.iterrows():
+                    epi_res = supabase.table("ep").select("nome").eq("id", int(row_tk['id_epi'])).execute()
+                    epi_nome = epi_res.data[0]['nome'] if epi_res.data else "EPI"
+                    nomes_epis.append(f"{row_tk['quantidade']}x {epi_nome}")
+                    
+                itens_str = ", ".join(nomes_epis)
+                
                 col1, col2 = st.columns([3, 1])
-                col1.write(f"⏳ **{f['nome']}** | {p['quantidade']}x {epi_nome} | Token: `{p['token']}`")
-                link = f"{get_cfg('url_sistema')}/?confirmar={p['token']}"
-                msg = f"🛡️ *SESMT HUC*\nOlá *{f['nome']}*,\nVocê possui uma entrega pendente de confirmação para o EPI: *{p['quantidade']}x {epi_nome}*. Acesse o link seguro para assinar digitalmente: {link}"
+                col1.write(f"⏳ **{f['nome']}** | 📦 {itens_str} | Token: `{tk_pendente}`")
+                link = f"{get_cfg('url_sistema')}/?confirmar={tk_pendente}"
+                msg = f"🛡️ *SESMT HUC*\nOlá *{f['nome']}*,\nVocê possui um pacote de EPIs pendente de confirmação: *{itens_str}*. Acesse o link seguro para assinar digitalmente: {link}"
                 with col2: abrir_whatsapp(f['whatsapp'], msg)
     else:
         st.success("Nenhuma assinatura pendente no momento!")
 
 # ----------------------------------------------------------------------------
-# 2. 🚀 REGISTRAR ENTREGA (Atualizado com Seleção por C.A. e Alerta de Vencimento)
+# 2. 🚀 REGISTRAR ENTREGA (NOVO SISTEMA DE CARRINHO MÚLTIPLO)
 # ----------------------------------------------------------------------------
 elif menu == "🚀 Registrar Entrega":
-    st.title("🚀 Registrar Entrega de Equipamentos")
+    st.title("🚀 Registrar Lote de Entrega")
     df_f = load_data("oficiais", "nome")
     df_ep = load_data("ep", "nome")
     
     if df_f.empty or df_ep.empty: 
         st.warning("É necessário cadastrar Colaboradores e EPIs no catálogo antes de realizar uma entrega.")
     else:
-        # Cria uma coluna de visualização para o selectbox combinando Nome e C.A.
         df_ep['nome_display'] = df_ep['nome'] + " (C.A: " + df_ep['ca'].fillna("N/A").astype(str) + ")"
         
-        with st.form("ent"):
-            f = st.selectbox("Selecione o Colaborador", df_f['matricula'] + " - " + df_f['nome'])
-            e_display = st.selectbox("Selecione o EPI (Verifique o C.A.)", df_ep['nome_display'])
-            q = st.number_input("Quantidade Fornecida", min_value=1, value=1)
-            
-            if st.form_submit_button("Gerar Registro de Entrega"):
-                rf = df_f[df_f['matricula'] + " - " + df_f['nome'] == f].iloc[0]
+        st.subheader("1️⃣ Selecionar Colaborador")
+        f_selecionado = st.selectbox("Busque a matrícula ou nome", df_f['matricula'] + " - " + df_f['nome'])
+        st.divider()
+        
+        st.subheader("2️⃣ Adicionar EPIs ao Pacote")
+        colA, colB, colC = st.columns([3, 1, 1])
+        with colA: e_display = st.selectbox("Selecione o EPI", df_ep['nome_display'])
+        with colB: q = st.number_input("Quantidade", min_value=1, value=1)
+        with colC:
+            st.write("") 
+            st.write("")
+            if st.button("➕ Adicionar à Lista", use_container_width=True):
                 re = df_ep[df_ep['nome_display'] == e_display].iloc[0]
-                tk = str(int(time.time()))[-6:]
                 
-                # Validação de C.A. vencido no ato da entrega
                 hoje = datetime.today().date()
-                ca_vencido = False
+                ca_venc = False
                 if pd.notna(re['validade']):
                     try:
-                        if datetime.strptime(str(re['validade']), '%Y-%m-%d').date() < hoje:
-                            ca_vencido = True
+                        if datetime.strptime(str(re['validade']), '%Y-%m-%d').date() < hoje: ca_venc = True
                     except: pass
                 
-                if ca_vencido:
-                    st.warning(f"⚠️ Atenção Técnica: O C.A. do EPI selecionado ({re['nome']}) encontra-se VENCIDO no catálogo. A entrega foi registrada, mas recomenda-se atualizar os dados do C.A.")
-                
-                try:
-                    supabase.table("entregas").insert({
-                        "id_func": int(rf['id']), "id_epi": int(re['id']), 
-                        "token": tk, "quantidade": q, "status": STATUS_ENTREGA["PENDENTE"]
-                    }).execute()
+                st.session_state.carrinho_epi.append({
+                    "id_epi": int(re['id']),
+                    "nome_display": e_display,
+                    "nome_puro": re['nome'],
+                    "qtd": q,
+                    "vencido": ca_venc
+                })
+                st.rerun()
+
+        st.divider()
+        if st.session_state.carrinho_epi:
+            st.subheader(f"🛒 Lista de Entrega (Total: {len(st.session_state.carrinho_epi)} itens)")
+            
+            for i, item in enumerate(st.session_state.carrinho_epi):
+                alerta = "🔴 (C.A. VENCIDO)" if item['vencido'] else "✅"
+                c1, c2, c3 = st.columns([4, 1, 1])
+                c1.write(f"**{item['nome_display']}** {alerta}")
+                c2.write(f"Qtd: **{item['qtd']}**")
+                if c3.button("🗑️ Excluir", key=f"del_epi_{i}"):
+                    st.session_state.carrinho_epi.pop(i)
+                    st.rerun()
                     
-                    st.success(f"✅ Entrega registrada com sucesso! Token gerado: `{tk}`")
+            st.write("")
+            if st.button(f"🚀 FECHAR PACOTE E REGISTRAR ({len(st.session_state.carrinho_epi)} ITENS)", type="primary", use_container_width=True):
+                rf = df_f[df_f['matricula'] + " - " + df_f['nome'] == f_selecionado].iloc[0]
+                tk = str(int(time.time()))[-6:]
+                
+                nomes_msg = []
+                try:
+                    for epi_item in st.session_state.carrinho_epi:
+                        supabase.table("entregas").insert({
+                            "id_func": int(rf['id']), 
+                            "id_epi": epi_item["id_epi"], 
+                            "token": tk, 
+                            "quantidade": epi_item["qtd"], 
+                            "status": STATUS_ENTREGA["PENDENTE"]
+                        }).execute()
+                        nomes_msg.append(f"{epi_item['qtd']}x {epi_item['nome_puro']}")
+                        
+                    st.session_state.carrinho_epi = [] # Esvazia o carrinho após o sucesso
+                    st.success(f"✅ Pacote registrado com sucesso! Token único gerado: `{tk}`")
+                    
                     link = f"{get_cfg('url_sistema')}/?confirmar={tk}"
-                    msg = f"🛡️ *SESMT HUC*\nOlá *{rf['nome']}*,\nConfirme o recebimento de *{q}x {re['nome']}* acessando o link seguro de assinatura: {link}"
+                    itens_txt = ", ".join(nomes_msg)
+                    msg = f"🛡️ *SESMT HUC*\nOlá *{rf['nome']}*,\nConfirme o recebimento do pacote de EPIs:\n*{itens_txt}*\n\nAcesse o link seguro de assinatura: {link}"
                     abrir_whatsapp(rf['whatsapp'], msg)
+                    
                 except Exception as e_db:
-                    st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e_db)}")
+                    st.error(f"⚠️ Rejeição do Supabase ao processar lote: {extrair_erro_db(e_db)}")
+        else:
+            st.info("Nenhum EPI adicionado à lista de entrega no momento.")
 
 # ----------------------------------------------------------------------------
 # 3. 👥 COLABORADORES
@@ -432,7 +488,7 @@ elif menu == "🎖️ Funções":
     st.dataframe(load_data("funcoes", "nome"), use_container_width=True)
 
 # ----------------------------------------------------------------------------
-# 5. 📦 CATÁLOGO EPI (Atualizado com Lógica de Vencimento Visual)
+# 5. 📦 CATÁLOGO EPI
 # ----------------------------------------------------------------------------
 elif menu == "📦 Catálogo EPI":
     st.title("📦 Catálogo de Equipamentos e Certificados de Aprovação (C.A.)")
@@ -454,7 +510,6 @@ elif menu == "📦 Catálogo EPI":
     with t2:
         df_ep = load_data("ep", "nome")
         if not df_ep.empty:
-            # Cria a string de visualização (Nome + C.A.)
             df_ep['nome_display'] = df_ep['nome'] + " (C.A: " + df_ep['ca'].fillna("N/A").astype(str) + ")"
             
             sel = st.selectbox("Selecione o Item para Atualizar/Renovar C.A.", df_ep['nome_display'])
@@ -482,7 +537,6 @@ elif menu == "📦 Catálogo EPI":
             st.divider()
             st.subheader("📋 Visão Geral do Catálogo")
             
-            # Análise de Vencimento Dinâmica
             df_ep_view = df_ep.copy()
             hoje = datetime.today().date()
             
