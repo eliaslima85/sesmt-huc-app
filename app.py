@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v5.0 (FINAL)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v5.1 (STABLE)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 """
 
@@ -54,6 +54,7 @@ def clean_str(text):
 def format_br(date_str, include_time=False):
     if not date_str: return "N/A"
     try:
+        if "/" in str(date_str): return str(date_str) # Evita re-formatação
         clean_date = str(date_str).replace('Z', '').split('+')[0]
         dt = datetime.fromisoformat(clean_date)
         return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
@@ -151,13 +152,12 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False):
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 if not st.session_state.logado:
-    st.title("🛡️ SESMT HUC")
+    st.markdown("<h1 style='text-align:center;'>🛡️ SESMT HUC</h1>", unsafe_allow_html=True)
     pw = st.text_input("Senha", type="password")
     if st.button("Entrar"):
         if pw == get_cfg("app_password", "1234"): st.session_state.logado = True; st.rerun()
     st.stop()
 
-# MENU LATERAL - TODAS AS OPÇÕES ESTÃO AQUI
 menu = st.sidebar.radio("SESMT MENU", [
     "📊 Painel", 
     "🚀 Registrar Entrega", 
@@ -171,7 +171,7 @@ menu = st.sidebar.radio("SESMT MENU", [
 if st.sidebar.button("Sair"): st.session_state.logado = False; st.rerun()
 
 # ----------------------------------------------------------------------------
-# 1. PAINEL (PENDÊNCIAS)
+# 1. PAINEL (DASHBOARD)
 # ----------------------------------------------------------------------------
 if menu == "📊 Painel":
     st.title("📊 Indicadores e Pendências")
@@ -230,7 +230,14 @@ elif menu == "👥 Colaboradores":
             if st.form_submit_button("Salvar"):
                 supabase.table("oficiais").insert({"nome":n, "matricula":m, "setor":s, "funcao":f, "whatsapp":z}).execute()
                 st.success("Salvo!"); st.cache_data.clear()
-        st.dataframe(load_data("oficiais", "nome"), use_container_width=True)
+        
+        df_oficiais = load_data("oficiais", "nome")
+        if not df_oficiais.empty:
+            df_oficiais_view = df_oficiais.copy()
+            for col in ['data_admissao', 'data_consentimento', 'data_criacao']:
+                if col in df_oficiais_view.columns:
+                    df_oficiais_view[col] = df_oficiais_view[col].apply(lambda x: format_br(x) if x and 'time' not in col else format_br(x, True) if x else "")
+            st.dataframe(df_oficiais_view, use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
 # 4. FUNÇÕES
@@ -245,7 +252,7 @@ elif menu == "🎖️ Funções":
     st.dataframe(load_data("funcoes", "nome"), use_container_width=True)
 
 # ----------------------------------------------------------------------------
-# 5. CATÁLOGO EPI (RECUPERADO)
+# 5. CATÁLOGO EPI
 # ----------------------------------------------------------------------------
 elif menu == "📦 Catálogo EPI":
     st.title("📦 Catálogo de Itens")
@@ -264,15 +271,21 @@ elif menu == "📦 Catálogo EPI":
             with st.form("edit_epi"):
                 en, eca, ev = st.text_input("Nome", it['nome']).upper(), st.text_input("C.A.", it['ca']), st.date_input("Validade", datetime.strptime(it['validade'], '%Y-%m-%d'))
                 c1, c2 = st.columns(2)
-                if c1.form_submit_button("💾 Salvar"):
+                if c1.form_submit_button("💾 Salvar Alterações"):
                     supabase.table("ep").update({"nome":en, "ca":eca, "validade":str(ev)}).eq("id", int(it['id'])).execute()
                     st.success("OK!"); st.cache_data.clear(); st.rerun()
                 if c2.form_submit_button("🗑️ Deletar"):
                     supabase.table("ep").delete().eq("id", int(it['id'])).execute()
                     st.warning("Removido!"); st.cache_data.clear(); st.rerun()
+            
+            df_ep_view = df_ep.copy()
+            for col in ['validade', 'data_criacao', 'data_atualizacao']:
+                if col in df_ep_view.columns:
+                    df_ep_view[col] = df_ep_view[col].apply(lambda x: format_br(x) if x and 'time' not in col and 'criacao' not in col else format_br(x, True) if x else "")
+            st.dataframe(df_ep_view, use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
-# 6. FICHA INDIVIDUAL (LOGICA DE 20 ITENS)
+# 6. FICHA INDIVIDUAL (CICLO DE 20 - UPLOAD CORRIGIDO)
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha Individual")
@@ -289,10 +302,11 @@ elif menu == "📄 Ficha Individual":
                 img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
                 buffered = BytesIO(); img.save(buffered, format="PNG")
                 path = f"assinaturas/sig_{f_info['id']}.png"
-                supabase.storage.from_("assinaturas").upload(path, buffered.getvalue(), {"content-type": "image/png", "upsert": "true"})
+                # CORREÇÃO DA SINTAXE DO UPLOAD AQUI (upsert booleano):
+                supabase.storage.from_("assinaturas").upload(path, buffered.getvalue(), file_options={"content-type": "image/png", "upsert": True})
                 url = supabase.storage.from_("assinaturas").get_public_url(path)
                 supabase.table("oficiais").update({"assinatura_url": url}).eq("id", int(f_info['id'])).execute()
-                st.success("Assinatura Salva!")
+                st.success("Assinatura Salva com Sucesso na Nuvem!")
 
         res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).order("data_entrega", desc=True).execute().data
         if res:
@@ -300,18 +314,18 @@ elif menu == "📄 Ficha Individual":
             
             if len(df_h) >= 20: st.warning(f"⚠️ Ciclo de 20 itens atingido ({len(df_h)} entregas).")
             
-            st.dataframe(df_h, use_container_width=True)
+            st.dataframe(df_h, use_container_width=True, hide_index=True)
             headers = ["DATA/HORA", "QTD", "DESCRIÇÃO DO EPI", "C.A.", "TOKEN", "STATUS"]
             
             col_b1, col_b2 = st.columns(2)
             pdf_c = generate_pdf("FICHA DE EPI - CICLO ATUAL (20 ITENS)", headers, df_h.head(20).values.tolist(), dict(f_info), True)
-            if pdf_c: col_b1.download_button("📥 BAIXAR CICLO (Últimos 20)", data=pdf_c, file_name=f"Ciclo_{sel}.pdf")
+            if pdf_c: col_b1.download_button("📥 BAIXAR CICLO (Últimos 20)", data=pdf_c, file_name=f"Ciclo_{sel}.pdf", mime="application/pdf")
             
             pdf_g = generate_pdf("FICHA DE EPI - HISTÓRICO GERAL", headers, df_h.values.tolist(), dict(f_info), True)
-            if pdf_g: col_b2.download_button("📥 BAIXAR FICHA GERAL", data=pdf_g, file_name=f"Geral_{sel}.pdf")
+            if pdf_g: col_b2.download_button("📥 BAIXAR FICHA GERAL", data=pdf_g, file_name=f"Geral_{sel}.pdf", mime="application/pdf")
 
 # ----------------------------------------------------------------------------
-# 7. BALANÇO SEMANAL (POR SETOR - 7 DIAS)
+# 7. BALANÇO SEMANAL
 # ----------------------------------------------------------------------------
 elif menu == "📈 Balanço Semanal":
     st.title("📈 Consumo Semanal por Setor")
@@ -329,7 +343,7 @@ elif menu == "📈 Balanço Semanal":
             df_s = pd.DataFrame(list_s).groupby(['Setor', 'EPI'])['Qtd'].sum().reset_index()
             st.table(df_s)
             pdf_s = generate_pdf("RELATÓRIO DE CONSUMO SEMANAL", ["SETOR", "TIPO DE EPI", "QUANTIDADE"], df_s.values.tolist())
-            if pdf_s: st.download_button("📥 BAIXAR RELATÓRIO (PDF)", data=pdf_s, file_name="Semanal_Setores.pdf")
+            if pdf_s: st.download_button("📥 BAIXAR RELATÓRIO (PDF)", data=pdf_s, file_name="Semanal_Setores.pdf", mime="application/pdf")
         else: st.info("Sem consumo nos últimos 7 dias.")
 
 # ----------------------------------------------------------------------------
