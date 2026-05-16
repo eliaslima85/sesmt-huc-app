@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.0 (PRODUCTION READY - ULTRA REFINED)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.2 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Premium
 """
@@ -229,7 +229,7 @@ supabase: Client = init_supabase()
 
 HOSPITAL_NAME = "HOSPITAL UNIVERSITÁRIO DO CEARÁ"
 HOSPITAL_ISGH = "ISGH - INSTITUTO DE SAÚDE E GESTÃO HOSPITALAR"
-CNPJ_ENDERECO = "CNPJ: 05.268.526/0024-67 | AV DOUTOR SILAS MUNGUBA, 1700-ITAPERI | FORTALEZA/CE | CEP: 60.714-242"
+CNPJ_ENDERECO = "CNPJ: 05.268.526/0024-67 | R. Betel, 2021 - Itaperi, Fortaleza - CE, 60714-230"
 STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
 
 if 'carrinho_epi' not in st.session_state:
@@ -240,7 +240,6 @@ if 'carrinho_epi' not in st.session_state:
 # ============================================================================
 
 def render_metric_card(label, value, icon="📊", color="primary"):
-    """Renderiza um card de métrica padronizado"""
     color_map = {
         "primary": "#2d5a7b",
         "success": "#27ae60",
@@ -257,11 +256,9 @@ def render_metric_card(label, value, icon="📊", color="primary"):
     """, unsafe_allow_html=True)
 
 def render_badge(text, style="success"):
-    """Renderiza um badge com estilo"""
     return f'<span class="badge badge-{style}">{text}</span>'
 
 def render_card(title, content, icon="📌", style="primary"):
-    """Renderiza um card com conteúdo customizado"""
     style_class = f"card card-{style}" if style != "primary" else "card"
     st.markdown(f"""
     <div class="{style_class}">
@@ -275,13 +272,11 @@ def render_card(title, content, icon="📌", style="primary"):
     """, unsafe_allow_html=True)
 
 def section_divider(title=""):
-    """Separador visual de seção"""
     st.markdown("---")
     if title:
         st.markdown(f"### {title}")
 
 def status_badge(status):
-    """Badge visual para status de entrega"""
     if "Confirmado" in status:
         return render_badge("✅ Confirmado", "success")
     elif "Pendente" in status:
@@ -385,27 +380,34 @@ if "confirmar" in st.query_params:
             if not func.get('assinatura_url'):
                 st.info("📝 **Primeira Assinatura Eletrônica**\nDesenhe sua assinatura abaixo para registro permanente em seu prontuário.")
                 
-                col_canvas, col_info = st.columns([2, 1])
-                with col_canvas:
-                    canvas_zap = st_canvas(
-                        stroke_width=2, 
-                        stroke_color="#2d5a7b", 
-                        background_color="#f8f9fa", 
-                        height=140, 
-                        width=320, 
-                        key="canvas_zap"
-                    )
-                with col_info:
-                    st.markdown("""
-                    <div style="padding: 1rem; background: #e8f4f8; border-radius: 8px;">
-                        <h4>💡 Dicas</h4>
-                        <ul style="margin: 0; padding-left: 1.2rem; font-size: 0.9rem;">
-                            <li>Use caneta ou mouse</li>
-                            <li>Assinatura clara</li>
-                            <li>Evite borrados</li>
-                        </ul>
-                    </div>
-                    """, unsafe_allow_html=True)
+                # ADIÇÃO: Alerta amigável e em destaque para virar a tela
+                st.markdown("""
+                <div style="background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; border-left: 5px solid #ffeeba; margin-bottom: 15px;">
+                    <strong>📱 DICA DE OURO:</strong> Se estiver no celular, <b>vire a tela deitada (modo paisagem) 🔄</b> para ter mais espaço livre e conseguir assinar o seu nome completo com tranquilidade!
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # QUADRO EXTENSO: Retirado das colunas laterais para ocupar 100% da largura na tela (com largura hardcoded alta para forçar o scroll/landscape)
+                canvas_zap = st_canvas(
+                    stroke_width=2, 
+                    stroke_color="#2d5a7b", 
+                    background_color="#f8f9fa", 
+                    height=220, # Mais alto
+                    width=650,  # Mais largo (ideal para quem virar a tela)
+                    key="canvas_zap"
+                )
+                
+                # AS DICAS FORAM MANTIDAS: Apenas passadas para debaixo do quadro para melhorar o layout
+                st.markdown("""
+                <div style="padding: 1rem; background: #e8f4f8; border-radius: 8px; margin-top: 15px; margin-bottom: 15px;">
+                    <h4>💡 Dicas Adicionais</h4>
+                    <ul style="margin: 0; padding-left: 1.2rem; font-size: 0.9rem;">
+                        <li>Use caneta touch ou o próprio dedo</li>
+                        <li>Faça uma assinatura clara e legível</li>
+                        <li>Se borrar, clique no ícone da lixeira 🗑️ no cantinho do quadro para limpar</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
                 
                 if st.button("✍️ Gravar Assinatura e Confirmar", use_container_width=True, type="primary"):
                     if canvas_zap.image_data is not None:
@@ -446,13 +448,38 @@ if "confirmar" in st.query_params:
     st.stop()
 
 # ============================================================================
-# 📄 GERADOR DE PDF PROFISSIONAL
+# 📄 GERADOR DE PDF PROFISSIONAL (COM ASSINATURA NO RODAPÉ EM TODAS PÁGINAS)
 # ============================================================================
 
 def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, custom_text=None):
     from fpdf import FPDF
     try:
-        pdf = FPDF(orientation='L', unit='mm', format='A4')
+        # Pre-processa a imagem da assinatura para garantir que estará pronta para o rodapé
+        img_path = None
+        if is_ficha and func_info and func_info.get('assinatura_url'):
+            try:
+                r = requests.get(func_info['assinatura_url'], timeout=5)
+                img = Image.open(BytesIO(r.content)).convert("RGB")
+                img.save("temp_sig.jpg")
+                img_path = "temp_sig.jpg"
+            except: pass
+
+        # Classe customizada para garantir a assinatura em todas as páginas
+        class CustomPDF(FPDF):
+            def footer(self):
+                if is_ficha:
+                    self.set_y(-35) # 3.5cm a partir do fundo da folha
+                    self.set_font("Arial", 'B', 9)
+                    self.set_text_color(0, 0, 0)
+                    self.cell(0, 5, clean_str("ASSINATURA ELETRONICA DO FUNCIONARIO"), border=0, ln=1)
+                    self.ln(2)
+                    if img_path:
+                        try:
+                            self.image(img_path, x=20, y=self.get_y(), w=40)
+                        except: pass
+
+        pdf = CustomPDF(orientation='L', unit='mm', format='A4')
+        pdf.set_auto_page_break(auto=True, margin=40) # Margem grande para não sobrepor o rodapé
         pdf.add_page()
         
         pdf.set_font("Arial", 'B', 14)
@@ -498,20 +525,6 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
             pdf.set_font("Arial", 'I', 8)
             texto_render = custom_text if custom_text else get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")
             pdf.multi_cell(0, 4, clean_str(texto_render))
-            
-            pdf.ln(8)
-            pdf.set_font("Arial", 'B', 9)
-            pdf.cell(0, 5, clean_str("ASSINATURA ELETRONICA DO FUNCIONARIO"), border=0, ln=1)
-            pdf.ln(2)
-            
-            if func_info.get('assinatura_url'):
-                try:
-                    r = requests.get(func_info['assinatura_url'], timeout=5)
-                    img = Image.open(BytesIO(r.content)).convert("RGB")
-                    img.save("temp_sig.jpg")
-                    pdf.image("temp_sig.jpg", x=20, y=pdf.get_y(), w=40)
-                    pdf.ln(15)
-                except: pass
 
         return pdf.output(dest='S').encode('latin-1')
     except Exception as e:
