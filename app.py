@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.7 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.8 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Premium
 """
@@ -382,8 +382,8 @@ if "confirmar" in st.query_params:
                 """, unsafe_allow_html=True)
                 
                 canvas_zap = st_canvas(
-                    stroke_width=2, 
-                    stroke_color="#2d5a7b", 
+                    stroke_width=3, 
+                    stroke_color="#000000", 
                     background_color="#f8f9fa", 
                     height=220, 
                     width=650,  
@@ -452,7 +452,7 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
                     self.set_y(-35) 
                     self.set_font("Arial", 'B', 9)
                     self.set_text_color(0, 0, 0)
-                    self.cell(0, 5, clean_str("ASSINATURA ELETRONICA DO FUNCIONARIO"), border=0, ln=1)
+                    self.cell(0, 5, clean_str("ASSINATURA ELETRÔNICA DO FUNCIONÁRIO"), border=0, ln=1)
                     self.ln(2)
                     if img_path:
                         try:
@@ -1200,7 +1200,7 @@ elif menu == "📄 Ficha Individual":
             col_b1, col_b2 = st.columns(2)
             
             pdf_c = generate_pdf(
-                "FICHA CICLO ATUAL",
+                "FICHA DE EPI (CICLO ATUAL)",
                 headers,
                 df_h.head(20).values.tolist(),
                 dict(f_info),
@@ -1211,7 +1211,7 @@ elif menu == "📄 Ficha Individual":
                 col_b1.download_button("📥 Ciclo (20 últimos)", data=pdf_c, file_name=f"Ciclo_{sel}.pdf", mime="application/pdf", use_container_width=True)
             
             pdf_g = generate_pdf(
-                "FICHA HISTÓRICO COMPLETO",
+                "FICHA DE EPI (HISTÓRICO COMPLETO)",
                 headers,
                 df_h.values.tolist(),
                 dict(f_info),
@@ -1237,23 +1237,20 @@ elif menu == "📈 Balanço Semanal":
     res = supabase.table("entregas").select("*, oficiais(setor), ep(nome)").execute().data
     
     if res:
-        sete_dias = datetime.now() - timedelta(days=7)
         list_s = []
+        ids_pendentes = []
         
         for h in res:
-            try:
-                dt_e = datetime.fromisoformat(h['data_entrega'].split('+')[0])
-                if dt_e >= sete_dias:
-                    list_s.append({
-                        "Setor": h['oficiais']['setor'] if h['oficiais'] else "N/A",
-                        "EPI": h['ep']['nome'] if h['ep'] else "N/A",
-                        "Qtd": h['quantidade']
-                    })
-            except:
-                pass
+            if not h.get('balanco_visto', False):
+                ids_pendentes.append(int(h['id']))
+                list_s.append({
+                    "Setor": h['oficiais']['setor'] if h.get('oficiais') else "N/A",
+                    "EPI": h['ep']['nome'] if h.get('ep') else "N/A",
+                    "Qtd": h['quantidade']
+                })
         
         if list_s:
-            st.success("✅ Movimentações detectadas")
+            st.success(f"✅ Há movimentações aguardando verificação no ciclo atual")
             df_s = pd.DataFrame(list_s).groupby(['Setor', 'EPI'])['Qtd'].sum().reset_index()
             st.dataframe(df_s, use_container_width=True, hide_index=True)
             
@@ -1263,9 +1260,25 @@ elif menu == "📈 Balanço Semanal":
                 df_s.values.tolist()
             )
             if pdf_s:
-                st.download_button("📥 Baixar Balanço", data=pdf_s, file_name="Semanal_Setores.pdf", mime="application/pdf", use_container_width=True)
+                st.download_button("📥 Baixar Balanço", data=pdf_s, file_name="Balanço_Pendente.pdf", mime="application/pdf", use_container_width=True)
+                
+            st.divider()
+            st.warning("⚠️ Ao clicar no botão abaixo, o sistema entende que você já baixou/verificou os dados acima. Eles desaparecerão desta tela para que um novo ciclo comece a ser contabilizado (mas continuam salvos no histórico individual de cada funcionário).")
+            
+            if st.button("✅ Confirmar Leitura e Fechar Ciclo", use_container_width=True, type="primary"):
+                try:
+                    for chunk in [ids_pendentes[i:i+100] for i in range(0, len(ids_pendentes), 100)]:
+                        supabase.table("entregas").update({"balanco_visto": True}).in_("id", chunk).execute()
+                    
+                    st.balloons()
+                    st.success("✅ Ciclo fechado com sucesso! A tela de balanço está pronta para o próximo período.")
+                    st.cache_data.clear()
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ Erro ao fechar o ciclo: Certifique-se de ter rodado o comando SQL no Supabase. Detalhes: {extrair_erro_db(e)}")
         else:
-            st.info("Nenhuma movimentação nos últimos 7 dias.")
+            st.info("Nenhuma movimentação pendente para este ciclo. Tudo verificado!")
     else:
         st.info("Sem dados disponíveis.")
 
