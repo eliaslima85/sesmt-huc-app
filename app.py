@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.5 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.6 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -200,7 +200,6 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
             pdf.cell(0, 8, clean_str(f"MATRÍCULA: {func_info['matricula']}"), border=1, ln=1)
             pdf.cell(140, 8, clean_str(f"SETOR: {func_info['setor']}"), border=1)
             pdf.cell(0, 8, clean_str(f"FUNÇÃO: {func_info.get('funcao', 'N/A')}"), border=1, ln=1)
-            # Inclusão: Data de Admissão no Prontuário do PDF
             pdf.cell(0, 8, clean_str(f"DATA DE ADMISSÃO: {format_br(func_info.get('data_admissao', 'N/A'))}"), border=1, ln=1)
             pdf.ln(5)
 
@@ -241,7 +240,7 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
         return None
 
 # ============================================================================
-# INTERFACE ADMINISTRATIVA E ROTEAMENTO DE MENUS (TODOS OS 8 MENUS ATIVOS)
+# INTERFACE ADMINISTRATIVA E ROTEAMENTO DE MENUS
 # ============================================================================
 
 if 'logado' not in st.session_state: st.session_state.logado = False
@@ -326,7 +325,7 @@ elif menu == "🚀 Registrar Entrega":
                 abrir_whatsapp(rf['whatsapp'], msg)
 
 # ----------------------------------------------------------------------------
-# 3. 👥 COLABORADORES (INCLUSÃO DA DATA DE ADMISSÃO)
+# 3. 👥 COLABORADORES (ABAS INCLUÍDAS PARA CADASTRO E GESTÃO/EXCLUSÃO)
 # ----------------------------------------------------------------------------
 elif menu == "👥 Colaboradores":
     st.title("👥 Gestão de Prontuários de Colaboradores")
@@ -334,21 +333,59 @@ elif menu == "👥 Colaboradores":
     if df_funcoes.empty: 
         st.error("⚠️ Cadastre as 'Funções/Cargos' no sistema antes de incluir colaboradores.")
     else:
-        with st.form("cad_col"):
-            n = st.text_input("Nome Completo").upper()
-            m = st.text_input("Número de Matrícula")
-            # Inclusão: Input para Data de Admissão
-            da = st.date_input("Data de Admissão", value=datetime.today())
-            s = st.selectbox("Setor de Lotação", ["CME", "SESMT", "UTI", "MANUTENÇÃO", "CENTRO CIRÚRGICO", "EMERGÊNCIA", "PEDIATRIA", "ADMINISTRATIVO"])
-            f = st.selectbox("Função / Cargo", df_funcoes['nome'].tolist())
-            z = st.text_input("WhatsApp (DDD + Número, ex: 85912345678)")
-            if st.form_submit_button("Salvar Registro"):
-                if n and m and z:
-                    # Gravação da Data de Admissão no Banco
-                    supabase.table("oficiais").insert({"nome":n, "matricula":m, "data_admissao": str(da), "setor":s, "funcao":f, "whatsapp":z}).execute()
-                    st.success("Colaborador cadastrado perfeitamente!"); st.cache_data.clear()
-                else: st.error("Preencha todos os campos obrigatórios.")
+        tab1, tab2 = st.tabs(["➕ Novo Colaborador", "🛠️ Gerenciar / Excluir"])
         
+        with tab1:
+            with st.form("cad_col"):
+                n = st.text_input("Nome Completo").upper()
+                m = st.text_input("Número de Matrícula")
+                da = st.date_input("Data de Admissão", value=datetime.today())
+                s = st.selectbox("Setor de Lotação", ["CME", "SESMT", "UTI", "MANUTENÇÃO", "CENTRO CIRÚRGICO", "EMERGÊNCIA", "PEDIATRIA", "ADMINISTRATIVO"])
+                f = st.selectbox("Função / Cargo", df_funcoes['nome'].tolist())
+                z = st.text_input("WhatsApp (DDD + Número, ex: 85912345678)")
+                if st.form_submit_button("Salvar Registro"):
+                    if n and m and z:
+                        supabase.table("oficiais").insert({"nome":n, "matricula":m, "data_admissao": str(da), "setor":s, "funcao":f, "whatsapp":z}).execute()
+                        st.success("Colaborador cadastrado perfeitamente!"); st.cache_data.clear()
+                    else: st.error("Preencha todos os campos obrigatórios.")
+        
+        with tab2:
+            df_oficiais = load_data("oficiais", "nome")
+            if not df_oficiais.empty:
+                sel_excluir = st.selectbox("Selecione o Colaborador para Excluir", df_oficiais['nome'])
+                func_del = df_oficiais[df_oficiais['nome'] == sel_excluir].iloc[0]
+                
+                st.warning(f"⚠️ **Atenção:** Você selecionou o colaborador **{func_del['nome']}** para exclusão. Esta ação é permanente.")
+                
+                # Buscar entregas para forçar o backup
+                res_del = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(func_del['id'])).order("data_entrega", desc=True).execute().data
+                if res_del:
+                    st.info("💡 É estritamente recomendado fazer o download do histórico completo deste colaborador antes de realizar a exclusão.")
+                    df_h_del = pd.DataFrame([{"Data/Hora": format_br(h['data_entrega'], True), "Qtd": h['quantidade'], "EPI": h['ep']['nome'], "C.A.": h['ep']['ca'], "Token": h['token'], "Status": h['status']} for h in res_del])
+                    headers_del = ["DATA/HORA", "QTD", "DESCRIÇÃO DO EPI", "C.A.", "TOKEN", "STATUS"]
+                    texto_padrao = get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")
+                    
+                    pdf_backup = generate_pdf(f"FICHA DE EPI - BACKUP DE EXCLUSAO", headers_del, df_h_del.values.tolist(), dict(func_del), True, custom_text=texto_padrao)
+                    if pdf_backup:
+                        st.download_button("📥 Baixar Ficha Completa Antes de Excluir", data=pdf_backup, file_name=f"Backup_Exclusao_{sel_excluir}.pdf", mime="application/pdf", use_container_width=True)
+                else:
+                    st.info("Este colaborador não possui nenhum registro de retirada de EPI.")
+
+                if st.button("🗑️ Deletar Colaborador Definitivamente", type="primary", use_container_width=True):
+                    try:
+                        # Deleta primeiro as entregas vinculadas para evitar conflito de chave no banco
+                        supabase.table("entregas").delete().eq("id_func", int(func_del['id'])).execute()
+                        # Deleta o funcionário
+                        supabase.table("oficiais").delete().eq("id", int(func_del['id'])).execute()
+                        st.success(f"✅ O colaborador {func_del['nome']} e todo seu histórico foram removidos do sistema.")
+                        st.cache_data.clear()
+                        time.sleep(2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao tentar excluir: {e}")
+
+        # Tabela global exibida abaixo das abas para sempre ter visão dos dados
+        st.write("---")
         df_oficiais = load_data("oficiais", "nome")
         if not df_oficiais.empty:
             df_oficiais_view = df_oficiais.copy()
@@ -410,7 +447,7 @@ elif menu == "📦 Catálogo EPI":
             st.dataframe(df_ep_view[['nome', 'ca', 'validade']], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
-# 6. 📄 FICHA INDIVIDUAL (EXIBIÇÃO COMPLETA DA DATA DE ADMISSÃO)
+# 6. 📄 FICHA INDIVIDUAL (COM BOTÃO DE SALVAR TEXTO PADRÃO)
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha Individual de Controle de EPI (NR-06)")
@@ -425,12 +462,17 @@ elif menu == "📄 Ficha Individual":
         else:
             st.info("ℹ️ Este funcionário não realizou nenhuma assinatura eletrônica. A coleta será feita no primeiro link do WhatsApp enviado.")
 
-        # Inclusão: Data de Admissão visível na tela da Ficha
         st.write(f"📅 **Data de Admissão:** {format_br(f_info.get('data_admissao'))}")
         
         st.write("---")
         termo_padrao = get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")
         texto_ficha = st.text_area("📝 Ajustar Texto de Declaração / Termo de Responsabilidade da Ficha", value=termo_padrao, height=100)
+        
+        if st.button("💾 Salvar Texto como Padrão para Todos", use_container_width=True):
+            supabase.table("configuracoes").upsert({"chave":"ficha_descricao", "valor": texto_ficha}, on_conflict="chave").execute()
+            st.success("✅ Texto atualizado e salvo com sucesso na nuvem!")
+            st.cache_data.clear()
+            
         st.write("---")
 
         res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).order("data_entrega", desc=True).execute().data
@@ -501,7 +543,7 @@ elif menu == "⚙️ Ajustes":
         if nova_senha:
             if nova_senha == confirma_senha:
                 supabase.table("configuracoes").upsert({"chave": "app_password", "valor": nova_senha}, on_conflict="chave").execute()
-                st.success("🔒 Senha administrativa de acesso updated com sucesso na nuvem!")
+                st.success("🔒 Senha administrativa de acesso atualizada com sucesso na nuvem!")
                 logger.info("🔒 Senha de acesso do aplicativo alterada.")
             else:
                 st.error("❌ As senhas digitadas não coincidem. Tente novamente.")
