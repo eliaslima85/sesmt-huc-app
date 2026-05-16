@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.1 (ULTRA STABLE)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.2 (ULTRA STABLE)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -127,9 +127,8 @@ if "confirmar" in st.query_params:
             st.write(f"**Item Recebido:** {epi_nome} | **Quantidade:** {entrega['quantidade']}")
             st.divider()
             
-            # Se não tem assinatura: Captura a primeira e salva como fixa master
             if not func.get('assinatura_url'):
-                st.warning("📝 Esta é sua primeira confirmação eletrônica. Desenhe sua assinatura na tela abaixo para salvá-la em sua ficha definitiva.")
+                st.warning("📝 Esta é sua primeira confirmation eletrônica. Desenhe sua assinatura na tela abaixo para salvá-la em sua ficha definitiva.")
                 canvas_zap = st_canvas(stroke_width=2, stroke_color="#000", background_color="#eee", height=140, width=340, key="canvas_zap")
                 
                 if st.button("✍️ Gravar Assinatura e Confirmar", use_container_width=True, type="primary"):
@@ -138,11 +137,9 @@ if "confirmar" in st.query_params:
                         buffered = BytesIO()
                         img.save(buffered, format="PNG")
                         
-                        # Estratégia de timestamp único para evitar problemas de cache e upsert
                         path = f"sig_{func['id']}_{int(time.time())}.png"
                         
                         try:
-                            # Requisição limpa para evitar incompatibilidade de tipos de bibliotecas HTTPX
                             supabase.storage.from_("assinaturas").upload(path=path, file=buffered.getvalue(), file_options={"content-type": "image/png"})
                             url = supabase.storage.from_("assinaturas").get_public_url(path)
                             
@@ -154,7 +151,6 @@ if "confirmar" in st.query_params:
                         except Exception as upload_err:
                             st.error(f"⚠️ Erro de armazenamento na nuvem. Verifique o Bucket público 'assinaturas'. Detalhes: {upload_err}")
             else:
-                # Se já tem assinatura salva: Validação jurídica imediata em um clique
                 st.success("✨ Sua assinatura digital master já está vinculada de forma segura ao seu prontuário.")
                 if st.button("👍 Confirmar Recebimento deste EPI", use_container_width=True, type="primary"):
                     supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
@@ -246,7 +242,7 @@ if not st.session_state.logado:
         else: st.error("Acesso Negado.")
     st.stop()
 
-# Menu lateral garantido sem omissões
+# Menu lateral com exatamente 8 opções estáveis
 menu = st.sidebar.radio("SESMT MENU", [
     "📊 Painel", 
     "🚀 Registrar Entrega", 
@@ -260,7 +256,7 @@ menu = st.sidebar.radio("SESMT MENU", [
 if st.sidebar.button("Sair do Sistema"): st.session_state.logado = False; st.rerun()
 
 # ----------------------------------------------------------------------------
-# 1. 📊 PAINEL (DASHBOARD & REENVIO DE WHATSAPP)
+# 1. 📊 PAINEL
 # ----------------------------------------------------------------------------
 if menu == "📊 Painel":
     st.title("📊 Indicadores e Controles Operacionais")
@@ -287,7 +283,7 @@ if menu == "📊 Painel":
         st.success("Nenhuma assinatura pendente no momento!")
 
 # ----------------------------------------------------------------------------
-# 2. 🚀 REGISTRAR ENTREGA (BOTÃO WHATSAPP IMEDIATO)
+# 2. 🚀 REGISTRAR ENTREGA
 # ----------------------------------------------------------------------------
 elif menu == "🚀 Registrar Entrega":
     st.title("🚀 Registrar Entrega de Equipamentos")
@@ -302,7 +298,7 @@ elif menu == "🚀 Registrar Entrega":
             if st.form_submit_button("Gerar Registro de Entrega"):
                 rf = df_f[df_f['matricula'] + " - " + df_f['nome'] == f].iloc[0]
                 re = df_ep[df_ep['nome'] == e].iloc[0]
-                tk = str(int(time.time()))[-6:] # Geração de token único rastreável
+                tk = str(int(time.time()))[-6:]
                 
                 supabase.table("entregas").insert({
                     "id_func": int(rf['id']), "id_epi": int(re['id']), 
@@ -315,7 +311,7 @@ elif menu == "🚀 Registrar Entrega":
                 abrir_whatsapp(rf['whatsapp'], msg)
 
 # ----------------------------------------------------------------------------
-# 3. 👥 COLABORADORES (EXIBIÇÃO COM DATAS BRASILEIRAS)
+# 3. 👥 COLABORADORES
 # ----------------------------------------------------------------------------
 elif menu == "👥 Colaboradores":
     st.title("👥 Gestão de Prontuários de Colaboradores")
@@ -357,7 +353,7 @@ elif menu == "🎖️ Funções":
     st.dataframe(load_data("funcoes", "nome"), use_container_width=True)
 
 # ----------------------------------------------------------------------------
-# 5. 📦 CATÁLOGO EPI (ABAS DE GESTÃO)
+# 5. 📦 CATÁLOGO EPI
 # ----------------------------------------------------------------------------
 elif menu == "📦 Catálogo EPI":
     st.title("📦 Catálogo de Equipamentos e Certificados de Aprovação (C.A.)")
@@ -396,7 +392,7 @@ elif menu == "📦 Catálogo EPI":
             st.dataframe(df_ep_view[['nome', 'ca', 'validade']], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
-# 6. 📄 FICHA INDIVIDUAL (LÓGICA JURÍDICA DE CICLOS DE 20 ITENS)
+# 6. 📄 FICHA INDIVIDUAL
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha Individual de Controle de EPI (NR-06)")
@@ -405,19 +401,16 @@ elif menu == "📄 Ficha Individual":
         sel = st.selectbox("Selecione o Colaborador para Análise", df_f['nome'])
         f_info = df_f[df_f['nome'] == sel].iloc[0]
         
-        # Verificação visual do status da assinatura master
         if f_info.get('assinatura_url'):
             st.success("✅ Assinatura Digital Master vinculada legalmente ao prontuário do colaborador.")
             st.image(f_info['assinatura_url'], width=200)
         else:
             st.info("ℹ️ Este funcionário não realizou nenhuma assinatura eletrônica. A coleta será feita no primeiro link do WhatsApp enviado.")
 
-        # Histórico Completo de Retiradas
         res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).order("data_entrega", desc=True).execute().data
         if res:
             df_h = pd.DataFrame([{"Data/Hora": format_br(h['data_entrega'], True), "Qtd": h['quantidade'], "EPI": h['ep']['nome'], "C.A.": h['ep']['ca'], "Token": h['token'], "Status": h['status']} for h in res])
             
-            # Alerta visual automático de estouro de ciclo de 20
             if len(df_h) >= 20: 
                 st.warning(f"⚠️ Alerta Fiscal: Ciclo de 20 itens atingido ({len(df_h)} retiradas). É recomendado fechar este ciclo e abrir um novo prontuário.")
             
@@ -426,18 +419,16 @@ elif menu == "📄 Ficha Individual":
             
             col_b1, col_b2 = st.columns(2)
             
-            # Opção de Download 1: Apenas os últimos 20 itens (Ciclo Atual)
             pdf_c = generate_pdf("FICHA DE EPI - CICLO ATUAL (20 ITENS MAX)", headers, df_h.head(20).values.tolist(), dict(f_info), True)
             if pdf_c: col_b1.download_button("📥 BAIXAR CICLO ATUAL (Últimos 20)", data=pdf_c, file_name=f"Ciclo_20_{sel}.pdf", mime="application/pdf", use_container_width=True)
             
-            # Opção de Download 2: Histórico Geral Completo
             pdf_g = generate_pdf("FICHA DE EPI - HISTORICO COMPLETO", headers, df_h.values.tolist(), dict(f_info), True)
             if pdf_g: col_b2.download_button("📥 BAIXAR HISTÓRICO GERAL (Completo)", data=pdf_g, file_name=f"Ficha_Geral_{sel}.pdf", mime="application/pdf", use_container_width=True)
         else:
             st.info("Nenhum EPI foi fornecido a este colaborador ainda.")
 
 # ----------------------------------------------------------------------------
-# 7. 📈 BALANÇO SEMANAL (FILTRO AUTOMÁTICO DE 7 DIAS POR SETOR)
+# 7. 📈 BALANÇO SEMANAL
 # ----------------------------------------------------------------------------
 elif menu == "📈 Balanço Semanal":
     st.title("📈 Balanço Semanal de Consumo por Setores")
@@ -463,11 +454,33 @@ elif menu == "📈 Balanço Semanal":
             st.info("Nenhuma retirada ou movimentação de EPI nos últimos 7 dias.")
 
 # ----------------------------------------------------------------------------
-# 8. ⚙️ AJUSTES
+# 8. ⚙️ AJUSTES (URL E ALTERAÇÃO DE SENHA INCLUSOS)
 # ----------------------------------------------------------------------------
 elif menu == "⚙️ Ajustes":
     st.title("⚙️ Configurações Gerais do Sistema")
+    
+    # Bloco 1: URL do Sistema
+    st.subheader("🌐 Link de Produção do Sistema")
     url = st.text_input("URL Pública do Aplicativo (Ex: https://seu-app.streamlit.app)", get_cfg("url_sistema"))
-    if st.button("Salvar Configurações", use_container_width=True):
+    if st.button("Salvar URL do Sistema", use_container_width=True):
         supabase.table("configuracoes").upsert({"chave":"url_sistema", "valor":url}, on_conflict="chave").execute()
-        st.success("Configurações atualizadas com sucesso na nuvem!")
+        st.success("URL pública do sistema sincronizada com a nuvem!")
+        
+    st.divider()
+    
+    # Bloco 2: Mudar Senha Admin
+    st.subheader("🔑 Segurança Administrativa (Alterar Senha)")
+    nova_senha = st.text_input("Nova Senha de Acesso", type="password", help="Defina a nova credencial para a tela de login administrativa")
+    confirma_senha = st.text_input("Confirme a Nova Senha", type="password")
+    
+    if st.button("Gravar Nova Senha", use_container_width=True):
+        if nova_senha:
+            if nova_senha == confirma_senha:
+                # Upsert seguro na tabela de configurações para sobrescrever ou criar a credencial
+                supabase.table("configuracoes").upsert({"chave": "app_password", "valor": nova_senha}, on_conflict="chave").execute()
+                st.success("🔒 Senha administrativa de acesso atualizada com sucesso na nuvem!")
+                logger.info("🔒 Senha de acesso do aplicativo alterada.")
+            else:
+                st.error("❌ As senhas digitadas não coincidem. Tente novamente.")
+        else:
+            st.error("❌ O campo de nova senha não pode estar vazio.")
