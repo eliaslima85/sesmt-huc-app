@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.5 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.7 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Premium
 """
@@ -271,11 +271,6 @@ def render_card(title, content, icon="📌", style="primary"):
     </div>
     """, unsafe_allow_html=True)
 
-def section_divider(title=""):
-    st.markdown("---")
-    if title:
-        st.markdown(f"### {title}")
-
 def status_badge(status):
     if "Confirmado" in status:
         return render_badge("✅ Confirmado", "success")
@@ -436,7 +431,7 @@ if "confirmar" in st.query_params:
     st.stop()
 
 # ============================================================================
-# 📄 GERADOR DE PDF PROFISSIONAL (COM ASSINATURA NO RODAPÉ EM TODAS PÁGINAS)
+# 📄 GERADOR DE PDF PROFISSIONAL
 # ============================================================================
 
 def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, custom_text=None):
@@ -777,7 +772,7 @@ elif menu == "👥 Colaboradores":
     df_funcoes = load_data("funcoes", "nome")
     df_vinculos = load_data("vinculos", "nome")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["➕ Novo Colaborador", "🔄 Gerenciar", "📋 Listar", "🔗 Cadastrar Vínculo"])
+    tab1, tab2, tab3, tab4 = st.tabs(["➕ Novo Colaborador", "🛠️ Gerenciar", "📋 Listar", "🔗 Vínculos"])
     
     with tab1:
         st.subheader("Cadastrar Novo Colaborador")
@@ -819,44 +814,92 @@ elif menu == "👥 Colaboradores":
         df_oficiais = load_data("oficiais", "nome")
         
         if not df_oficiais.empty:
-            sel_excluir = st.selectbox("Selecione para excluir", df_oficiais['nome'], key="sel_excluir_tab2")
-            func_del = df_oficiais[df_oficiais['nome'] == sel_excluir].iloc[0]
+            sel_colab = st.selectbox("Selecione um colaborador para editar ou excluir", df_oficiais['nome'])
+            it_colab = df_oficiais[df_oficiais['nome'] == sel_colab].iloc[0]
             
-            st.warning(f"⚠️ Você selecionou: **{func_del['nome']}**")
-            
-            res_del = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(func_del['id'])).execute().data
-            
-            if res_del:
-                st.info("💡 Baixar histórico antes de excluir")
-                df_h_del = pd.DataFrame([{
-                    "Data": format_br(h['data_entrega'], True),
-                    "Qtd": h['quantidade'],
-                    "EPI": h['ep']['nome'],
-                    "C.A.": h['ep']['ca'],
-                    "Token": h['token'],
-                    "Status": h['status']
-                } for h in res_del])
+            with st.expander("✏️ Editar Dados Cadastrais", expanded=True):
+                with st.form("edit_colab"):
+                    en_c = st.text_input("Nome Completo", it_colab['nome']).upper()
+                    em_c = st.text_input("Matrícula", it_colab['matricula'])
+                    
+                    da_val = datetime.today()
+                    if pd.notna(it_colab.get('data_admissao')):
+                        try:
+                            da_val = datetime.strptime(str(it_colab['data_admissao']).split(" ")[0], '%Y-%m-%d')
+                        except: pass
+                    eda_c = st.date_input("Data de Admissão", da_val, format="DD/MM/YYYY")
+                    
+                    setores_list = ["CME", "SESMT", "UTI", "MANUTENÇÃO", "CENTRO CIRÚRGICO", "EMERGÊNCIA", "PEDIATRIA", "ADMINISTRATIVO"]
+                    try: idx_setor = setores_list.index(it_colab.get('setor', 'CME'))
+                    except: idx_setor = 0
+                    es_c = st.selectbox("Setor", setores_list, index=idx_setor)
+                    
+                    funcoes_list = df_funcoes['nome'].tolist() if not df_funcoes.empty else ["N/A"]
+                    try: idx_func = funcoes_list.index(it_colab.get('funcao', ''))
+                    except: idx_func = 0
+                    ef_c = st.selectbox("Função", funcoes_list, index=idx_func)
+                    
+                    vinculos_list = df_vinculos['nome'].tolist() if not df_vinculos.empty else ["N/A"]
+                    try: idx_vinc = vinculos_list.index(it_colab.get('vinculo', ''))
+                    except: idx_vinc = 0
+                    ev_c = st.selectbox("Vínculo", vinculos_list, index=idx_vinc)
+                    
+                    ez_c = st.text_input("WhatsApp (DDD + Número)", it_colab.get('whatsapp', ''))
+                    
+                    if st.form_submit_button("💾 Salvar Alterações", use_container_width=True):
+                        try:
+                            supabase.table("oficiais").update({
+                                "nome": en_c,
+                                "matricula": em_c,
+                                "data_admissao": str(eda_c),
+                                "setor": es_c,
+                                "funcao": ef_c,
+                                "vinculo": ev_c,
+                                "whatsapp": ez_c
+                            }).eq("id", int(it_colab['id'])).execute()
+                            st.success("✅ Dados atualizados com sucesso!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ Erro ao atualizar: {extrair_erro_db(e)}")
+
+            with st.expander("🗑️ Zona de Perigo: Excluir Colaborador"):
+                st.warning(f"⚠️ Esta ação apagará permanentemente **{it_colab['nome']}** e todo o seu histórico de entregas do sistema.")
                 
-                pdf_backup = generate_pdf(
-                    f"BACKUP - {sel_excluir}",
-                    ["Data", "Qtd", "EPI", "C.A.", "Token", "Status"],
-                    df_h_del.values.tolist(),
-                    dict(func_del),
-                    True
-                )
-                if pdf_backup:
-                    st.download_button("📥 Baixar Backup", data=pdf_backup, file_name=f"Backup_{sel_excluir}.pdf", mime="application/pdf", use_container_width=True)
-            
-            if st.button("🗑️ Excluir Definitivamente", type="primary", use_container_width=True):
-                try:
-                    supabase.table("entregas").delete().eq("id_func", int(func_del['id'])).execute()
-                    supabase.table("oficiais").delete().eq("id", int(func_del['id'])).execute()
-                    st.success(f"✅ {func_del['nome']} removido com sucesso.")
-                    st.cache_data.clear()
-                    time.sleep(2)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+                res_del = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(it_colab['id'])).execute().data
+                if res_del:
+                    st.info("💡 É altamente recomendado baixar o histórico antes de excluir.")
+                    df_h_del = pd.DataFrame([{
+                        "Data": format_br(h['data_entrega'], True),
+                        "Qtd": h['quantidade'],
+                        "EPI": h['ep']['nome'],
+                        "C.A.": h['ep']['ca'],
+                        "Token": h['token'],
+                        "Status": h['status']
+                    } for h in res_del])
+                    
+                    pdf_backup = generate_pdf(
+                        f"BACKUP - {it_colab['nome']}",
+                        ["Data", "Qtd", "EPI", "C.A.", "Token", "Status"],
+                        df_h_del.values.tolist(),
+                        dict(it_colab),
+                        True
+                    )
+                    if pdf_backup:
+                        st.download_button("📥 Baixar Backup em PDF", data=pdf_backup, file_name=f"Backup_{it_colab['nome']}.pdf", mime="application/pdf", use_container_width=True)
+                
+                if st.button("🗑️ Excluir Definitivamente", type="primary", use_container_width=True):
+                    try:
+                        supabase.table("entregas").delete().eq("id_func", int(it_colab['id'])).execute()
+                        supabase.table("oficiais").delete().eq("id", int(it_colab['id'])).execute()
+                        st.success(f"✅ Colaborador removido com sucesso.")
+                        st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+        else:
+            st.info("Nenhum colaborador cadastrado para gerenciar.")
     
     with tab3:
         st.subheader("Lista de Colaboradores")
@@ -874,25 +917,55 @@ elif menu == "👥 Colaboradores":
             st.info("Nenhum colaborador cadastrado.")
 
     with tab4:
-        st.subheader("Cadastrar Novo Vínculo")
-        with st.form("add_v"):
-            nv = st.text_input("Nome do Vínculo (Ex: CLT, COOPERADO, TERCEIRIZADO)").upper()
-            if st.form_submit_button("➕ Adicionar Vínculo", use_container_width=True):
-                if nv:
-                    try:
-                        supabase.table("vinculos").insert({"nome": nv}).execute()
-                        st.success(f"✅ '{nv}' adicionado!")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"⚠️ Erro: Certifique-se de ter rodado o comando SQL no Supabase para criar a tabela 'vinculos'. Detalhes: {extrair_erro_db(e)}")
+        st.subheader("Gestão de Vínculos")
         
-        st.divider()
-        st.subheader("Vínculos Cadastrados")
-        if not df_vinculos.empty:
-            st.dataframe(df_vinculos[['nome']], use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhum vínculo cadastrado.")
+        v1, v2 = st.tabs(["➕ Adicionar", "🛠️ Gerenciar e Excluir"])
+        
+        with v1:
+            with st.form("add_v"):
+                nv = st.text_input("Nome do Vínculo (Ex: CLT, COOPERADO)").upper()
+                if st.form_submit_button("➕ Adicionar Vínculo", use_container_width=True):
+                    if nv:
+                        try:
+                            supabase.table("vinculos").insert({"nome": nv}).execute()
+                            st.success(f"✅ '{nv}' adicionado!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+        
+        with v2:
+            if not df_vinculos.empty:
+                sel_vinc = st.selectbox("Selecione para editar ou excluir", df_vinculos['nome'])
+                it_vinc = df_vinculos[df_vinculos['nome'] == sel_vinc].iloc[0]
+                
+                with st.form("edit_vinc"):
+                    en_vinc = st.text_input("Nome do Vínculo", it_vinc['nome']).upper()
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.form_submit_button("💾 Salvar Correção", use_container_width=True):
+                            try:
+                                supabase.table("vinculos").update({"nome": en_vinc}).eq("id", int(it_vinc['id'])).execute()
+                                st.success("✅ Vínculo atualizado!")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+                    with c2:
+                        if st.form_submit_button("🗑️ Excluir Definitivo", use_container_width=True):
+                            try:
+                                supabase.table("vinculos").delete().eq("id", int(it_vinc['id'])).execute()
+                                st.success("✅ Excluído!")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"⚠️ Erro (Pode estar em uso por um colaborador): {extrair_erro_db(e)}")
+                
+                st.divider()
+                st.dataframe(df_vinculos[['nome']], use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhum vínculo cadastrado.")
 
 # ============================================================================
 # 4. 🎖️ FUNÇÕES
@@ -905,25 +978,55 @@ elif menu == "🎖️ Funções":
     </h1>
     """, unsafe_allow_html=True)
     
-    with st.form("add_f"):
-        nf = st.text_input("Nome da Função (Ex: TÉCNICO DE ENFERMAGEM)").upper()
-        if st.form_submit_button("➕ Adicionar", use_container_width=True):
-            if nf:
-                try:
-                    supabase.table("funcoes").insert({"nome": nf}).execute()
-                    st.success(f"✅ '{nf}' adicionada!")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
-    
-    st.divider()
-    st.subheader("Funções Cadastradas")
     df_f = load_data("funcoes", "nome")
-    if not df_f.empty:
-        st.dataframe(df_f[['nome']], use_container_width=True, hide_index=True)
-    else:
-        st.info("Nenhuma função cadastrada.")
+    
+    t1, t2 = st.tabs(["➕ Nova Função", "🛠️ Gerenciar Funções"])
+    
+    with t1:
+        with st.form("add_f"):
+            nf = st.text_input("Nome da Função (Ex: TÉCNICO DE ENFERMAGEM)").upper()
+            if st.form_submit_button("➕ Adicionar", use_container_width=True):
+                if nf:
+                    try:
+                        supabase.table("funcoes").insert({"nome": nf}).execute()
+                        st.success(f"✅ '{nf}' adicionada!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+    
+    with t2:
+        if not df_f.empty:
+            sel_func = st.selectbox("Selecione para editar ou excluir", df_f['nome'])
+            it_func = df_f[df_f['nome'] == sel_func].iloc[0]
+            
+            with st.form("edit_func"):
+                en_func = st.text_input("Nome da Função", it_func['nome']).upper()
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.form_submit_button("💾 Salvar Correção", use_container_width=True):
+                        try:
+                            supabase.table("funcoes").update({"nome": en_func}).eq("id", int(it_func['id'])).execute()
+                            st.success("✅ Função atualizada!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+                with c2:
+                    if st.form_submit_button("🗑️ Excluir Definitivo", use_container_width=True):
+                        try:
+                            supabase.table("funcoes").delete().eq("id", int(it_func['id'])).execute()
+                            st.success("✅ Excluída!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ Erro (Pode estar em uso por um colaborador): {extrair_erro_db(e)}")
+            
+            st.divider()
+            st.dataframe(df_f[['nome']], use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma função cadastrada.")
 
 # ============================================================================
 # 5. 📦 CATÁLOGO EPI
