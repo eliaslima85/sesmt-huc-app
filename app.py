@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.2 (ULTRA STABLE)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.3 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -128,7 +128,7 @@ if "confirmar" in st.query_params:
             st.divider()
             
             if not func.get('assinatura_url'):
-                st.warning("📝 Esta é sua primeira confirmation eletrônica. Desenhe sua assinatura na tela abaixo para salvá-la em sua ficha definitiva.")
+                st.warning("📝 Esta é sua primeira confirmação eletrônica. Desenhe sua assinatura na tela abaixo para salvá-la em sua ficha definitiva.")
                 canvas_zap = st_canvas(stroke_width=2, stroke_color="#000", background_color="#eee", height=140, width=340, key="canvas_zap")
                 
                 if st.button("✍️ Gravar Assinatura e Confirmar", use_container_width=True, type="primary"):
@@ -143,7 +143,13 @@ if "confirmar" in st.query_params:
                             supabase.storage.from_("assinaturas").upload(path=path, file=buffered.getvalue(), file_options={"content-type": "image/png"})
                             url = supabase.storage.from_("assinaturas").get_public_url(path)
                             
-                            supabase.table("oficiais").update({"assinatura_url": url}).eq("id", func['id']).execute()
+                            # Try/Catch interno para proteger contra cache de esquema do banco de dados (PGRST204)
+                            try:
+                                supabase.table("oficiais").update({"assinatura_url": url}).eq("id", func['id']).execute()
+                            except Exception as db_col_err:
+                                logger.error(f"Erro PGRST204 interceptado: {db_col_err}")
+                                st.error("⚠️ Atenção: A coluna 'assinatura_url' não foi encontrada na tabela 'oficiais'. Execute o comando SQL indicado no painel do Supabase.")
+                            
                             supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
                             st.balloons()
                             st.success("✅ ASSINATURA REGISTRADA E EPI CONFIRMADO COM SUCESSO!")
@@ -242,7 +248,6 @@ if not st.session_state.logado:
         else: st.error("Acesso Negado.")
     st.stop()
 
-# Menu lateral com exatamente 8 opções estáveis
 menu = st.sidebar.radio("SESMT MENU", [
     "📊 Painel", 
     "🚀 Registrar Entrega", 
@@ -256,7 +261,7 @@ menu = st.sidebar.radio("SESMT MENU", [
 if st.sidebar.button("Sair do Sistema"): st.session_state.logado = False; st.rerun()
 
 # ----------------------------------------------------------------------------
-# 1. 📊 PAINEL
+# 1. 📊 PAINEL (MENSAGEM COM NOME E QUANTIDADE NO REENVIO)
 # ----------------------------------------------------------------------------
 if menu == "📊 Painel":
     st.title("📊 Indicadores e Controles Operacionais")
@@ -272,18 +277,22 @@ if menu == "📊 Painel":
     if len(pendentes) > 0:
         for _, p in pendentes.iterrows():
             f_res = supabase.table("oficiais").select("nome, whatsapp").eq("id", p['id_func']).execute()
+            epi_res = supabase.table("ep").select("nome").eq("id", p['id_epi']).execute()
+            epi_nome = epi_res.data[0]['nome'] if epi_res.data else "EPI"
+            
             if f_res.data:
                 f = f_res.data[0]
                 col1, col2 = st.columns([3, 1])
-                col1.write(f"⏳ **{f['nome']}** | Token: `{p['token']}`")
+                col1.write(f"⏳ **{f['nome']}** | {p['quantidade']}x {epi_nome} | Token: `{p['token']}`")
                 link = f"{get_cfg('url_sistema')}/?confirmar={p['token']}"
-                msg = f"🛡️ *SESMT HUC*\nOlá {f['nome']},\nVocê possui uma entrega pendente de confirmação. Acesse o link seguro para assinar: {link}"
+                # Alteração: Mensagem descritiva detalhada no Painel
+                msg = f"🛡️ *SESMT HUC*\nOlá *{f['nome']}*,\nVocê possui uma entrega pendente de confirmação para o EPI: *{p['quantidade']}x {epi_nome}*. Acesse o link seguro para assinar digitalmente: {link}"
                 with col2: abrir_whatsapp(f['whatsapp'], msg)
     else:
         st.success("Nenhuma assinatura pendente no momento!")
 
 # ----------------------------------------------------------------------------
-# 2. 🚀 REGISTRAR ENTREGA
+# 2. 🚀 REGISTRAR ENTREGA (MENSAGEM COM NOME E QUANTIDADE NO ATO)
 # ----------------------------------------------------------------------------
 elif menu == "🚀 Registrar Entrega":
     st.title("🚀 Registrar Entrega de Equipamentos")
@@ -307,7 +316,8 @@ elif menu == "🚀 Registrar Entrega":
                 
                 st.success(f"✅ Entrega registrada com sucesso! Token gerado: `{tk}`")
                 link = f"{get_cfg('url_sistema')}/?confirmar={tk}"
-                msg = f"🛡️ *SESMT HUC*\nOlá {rf['nome']},\nConfirme o recebimento do seu EPI ({e}) acessando o link seguro: {link}"
+                # Alteração: Mensagem descritiva detalhada com Nome e Quantidade no Registro
+                msg = f"🛡️ *SESMT HUC*\nOlá *{rf['nome']}*,\nConfirme o recebimento de *{q}x {e}* acessando o link seguro de assinatura: {link}"
                 abrir_whatsapp(rf['whatsapp'], msg)
 
 # ----------------------------------------------------------------------------
@@ -454,12 +464,11 @@ elif menu == "📈 Balanço Semanal":
             st.info("Nenhuma retirada ou movimentação de EPI nos últimos 7 dias.")
 
 # ----------------------------------------------------------------------------
-# 8. ⚙️ AJUSTES (URL E ALTERAÇÃO DE SENHA INCLUSOS)
+# 8. ⚙️ AJUSTES
 # ----------------------------------------------------------------------------
 elif menu == "⚙️ Ajustes":
     st.title("⚙️ Configurações Gerais do Sistema")
     
-    # Bloco 1: URL do Sistema
     st.subheader("🌐 Link de Produção do Sistema")
     url = st.text_input("URL Pública do Aplicativo (Ex: https://seu-app.streamlit.app)", get_cfg("url_sistema"))
     if st.button("Salvar URL do Sistema", use_container_width=True):
@@ -468,15 +477,13 @@ elif menu == "⚙️ Ajustes":
         
     st.divider()
     
-    # Bloco 2: Mudar Senha Admin
     st.subheader("🔑 Segurança Administrativa (Alterar Senha)")
-    nova_senha = st.text_input("Nova Senha de Acesso", type="password", help="Defina a nova credencial para a tela de login administrativa")
+    nova_senha = st.text_input("Nova Senha de Acesso", type="password")
     confirma_senha = st.text_input("Confirme a Nova Senha", type="password")
     
     if st.button("Gravar Nova Senha", use_container_width=True):
         if nova_senha:
             if nova_senha == confirma_senha:
-                # Upsert seguro na tabela de configurações para sobrescrever ou criar a credencial
                 supabase.table("configuracoes").upsert({"chave": "app_password", "valor": nova_senha}, on_conflict="chave").execute()
                 st.success("🔒 Senha administrativa de acesso atualizada com sucesso na nuvem!")
                 logger.info("🔒 Senha de acesso do aplicativo alterada.")
