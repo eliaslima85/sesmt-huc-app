@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.2 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.5 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Premium
 """
@@ -380,34 +380,22 @@ if "confirmar" in st.query_params:
             if not func.get('assinatura_url'):
                 st.info("📝 **Primeira Assinatura Eletrônica**\nDesenhe sua assinatura abaixo para registro permanente em seu prontuário.")
                 
-                # ADIÇÃO: Alerta amigável e em destaque para virar a tela
                 st.markdown("""
                 <div style="background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; border-left: 5px solid #ffeeba; margin-bottom: 15px;">
                     <strong>📱 DICA DE OURO:</strong> Se estiver no celular, <b>vire a tela deitada (modo paisagem) 🔄</b> para ter mais espaço livre e conseguir assinar o seu nome completo com tranquilidade!
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # QUADRO EXTENSO: Retirado das colunas laterais para ocupar 100% da largura na tela (com largura hardcoded alta para forçar o scroll/landscape)
                 canvas_zap = st_canvas(
                     stroke_width=2, 
                     stroke_color="#2d5a7b", 
                     background_color="#f8f9fa", 
-                    height=220, # Mais alto
-                    width=650,  # Mais largo (ideal para quem virar a tela)
+                    height=220, 
+                    width=650,  
                     key="canvas_zap"
                 )
                 
-                # AS DICAS FORAM MANTIDAS: Apenas passadas para debaixo do quadro para melhorar o layout
-                st.markdown("""
-                <div style="padding: 1rem; background: #e8f4f8; border-radius: 8px; margin-top: 15px; margin-bottom: 15px;">
-                    <h4>💡 Dicas Adicionais</h4>
-                    <ul style="margin: 0; padding-left: 1.2rem; font-size: 0.9rem;">
-                        <li>Use caneta touch ou o próprio dedo</li>
-                        <li>Faça uma assinatura clara e legível</li>
-                        <li>Se borrar, clique no ícone da lixeira 🗑️ no cantinho do quadro para limpar</li>
-                    </ul>
-                </div>
-                """, unsafe_allow_html=True)
+                st.write("")
                 
                 if st.button("✍️ Gravar Assinatura e Confirmar", use_container_width=True, type="primary"):
                     if canvas_zap.image_data is not None:
@@ -454,7 +442,6 @@ if "confirmar" in st.query_params:
 def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, custom_text=None):
     from fpdf import FPDF
     try:
-        # Pre-processa a imagem da assinatura para garantir que estará pronta para o rodapé
         img_path = None
         if is_ficha and func_info and func_info.get('assinatura_url'):
             try:
@@ -464,11 +451,10 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
                 img_path = "temp_sig.jpg"
             except: pass
 
-        # Classe customizada para garantir a assinatura em todas as páginas
         class CustomPDF(FPDF):
             def footer(self):
                 if is_ficha:
-                    self.set_y(-35) # 3.5cm a partir do fundo da folha
+                    self.set_y(-35) 
                     self.set_font("Arial", 'B', 9)
                     self.set_text_color(0, 0, 0)
                     self.cell(0, 5, clean_str("ASSINATURA ELETRONICA DO FUNCIONARIO"), border=0, ln=1)
@@ -479,7 +465,7 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
                         except: pass
 
         pdf = CustomPDF(orientation='L', unit='mm', format='A4')
-        pdf.set_auto_page_break(auto=True, margin=40) # Margem grande para não sobrepor o rodapé
+        pdf.set_auto_page_break(auto=True, margin=40)
         pdf.add_page()
         
         pdf.set_font("Arial", 'B', 14)
@@ -503,7 +489,11 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
             pdf.cell(0, 8, clean_str(f"MATRÍCULA: {func_info['matricula']}"), border=1, ln=1)
             pdf.cell(140, 8, clean_str(f"SETOR: {func_info['setor']}"), border=1)
             pdf.cell(0, 8, clean_str(f"FUNÇÃO: {func_info.get('funcao', 'N/A')}"), border=1, ln=1)
-            pdf.cell(0, 8, clean_str(f"DATA DE ADMISSÃO: {format_br(func_info.get('data_admissao', 'N/A'))}"), border=1, ln=1)
+            pdf.cell(140, 8, clean_str(f"DATA DE ADMISSÃO: {format_br(func_info.get('data_admissao', 'N/A'))}"), border=1)
+            
+            vinc = func_info.get('vinculo')
+            vinc_str = str(vinc) if vinc and pd.notna(vinc) and str(vinc).lower() != 'nan' else 'N/A'
+            pdf.cell(0, 8, clean_str(f"VÍNCULO: {vinc_str}"), border=1, ln=1)
             pdf.ln(5)
 
         pdf.set_fill_color(230, 230, 230)
@@ -785,20 +775,22 @@ elif menu == "👥 Colaboradores":
     """, unsafe_allow_html=True)
     
     df_funcoes = load_data("funcoes", "nome")
+    df_vinculos = load_data("vinculos", "nome")
     
-    if df_funcoes.empty:
-        st.error("⚠️ Cadastre 'Funções/Cargos' antes de adicionar colaboradores.")
-    else:
-        tab1, tab2, tab3 = st.tabs(["➕ Novo", "🔄 Gerenciar", "📋 Listar"])
-        
-        with tab1:
-            st.subheader("Cadastrar Novo Colaborador")
+    tab1, tab2, tab3, tab4 = st.tabs(["➕ Novo Colaborador", "🔄 Gerenciar", "📋 Listar", "🔗 Cadastrar Vínculo"])
+    
+    with tab1:
+        st.subheader("Cadastrar Novo Colaborador")
+        if df_funcoes.empty or df_vinculos.empty:
+            st.warning("⚠️ Cadastre 'Funções/Cargos' e 'Vínculos' (na aba correspondente) antes de adicionar colaboradores.")
+        else:
             with st.form("cad_col"):
                 n = st.text_input("Nome Completo").upper()
                 m = st.text_input("Matrícula")
                 da = st.date_input("Data de Admissão", format="DD/MM/YYYY")
                 s = st.selectbox("Setor", ["CME", "SESMT", "UTI", "MANUTENÇÃO", "CENTRO CIRÚRGICO", "EMERGÊNCIA", "PEDIATRIA", "ADMINISTRATIVO"])
                 f = st.selectbox("Função", df_funcoes['nome'].tolist())
+                v_inc = st.selectbox("Vínculo", df_vinculos['nome'].tolist())
                 z = st.text_input("WhatsApp (DDD + Número)")
                 
                 col_submit, col_cancel = st.columns(2)
@@ -812,69 +804,95 @@ elif menu == "👥 Colaboradores":
                                     "data_admissao": str(da),
                                     "setor": s,
                                     "funcao": f,
+                                    "vinculo": v_inc,
                                     "whatsapp": z
                                 }).execute()
                                 st.success("✅ Colaborador cadastrado!")
                                 st.cache_data.clear()
                             except Exception as e_db:
-                                st.error(f"⚠️ Erro: {extrair_erro_db(e_db)}")
+                                st.error(f"⚠️ Erro ao salvar: {extrair_erro_db(e_db)}")
                         else:
                             st.error("⚠️ Preencha todos os campos obrigatórios.")
+    
+    with tab2:
+        st.subheader("Gerenciar Colaborador")
+        df_oficiais = load_data("oficiais", "nome")
         
-        with tab2:
-            st.subheader("Gerenciar Colaborador")
-            df_oficiais = load_data("oficiais", "nome")
+        if not df_oficiais.empty:
+            sel_excluir = st.selectbox("Selecione para excluir", df_oficiais['nome'], key="sel_excluir_tab2")
+            func_del = df_oficiais[df_oficiais['nome'] == sel_excluir].iloc[0]
             
-            if not df_oficiais.empty:
-                sel_excluir = st.selectbox("Selecione para excluir", df_oficiais['nome'], key="sel_excluir_tab2")
-                func_del = df_oficiais[df_oficiais['nome'] == sel_excluir].iloc[0]
+            st.warning(f"⚠️ Você selecionou: **{func_del['nome']}**")
+            
+            res_del = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(func_del['id'])).execute().data
+            
+            if res_del:
+                st.info("💡 Baixar histórico antes de excluir")
+                df_h_del = pd.DataFrame([{
+                    "Data": format_br(h['data_entrega'], True),
+                    "Qtd": h['quantidade'],
+                    "EPI": h['ep']['nome'],
+                    "C.A.": h['ep']['ca'],
+                    "Token": h['token'],
+                    "Status": h['status']
+                } for h in res_del])
                 
-                st.warning(f"⚠️ Você selecionou: **{func_del['nome']}**")
-                
-                res_del = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(func_del['id'])).execute().data
-                
-                if res_del:
-                    st.info("💡 Baixar histórico antes de excluir")
-                    df_h_del = pd.DataFrame([{
-                        "Data": format_br(h['data_entrega'], True),
-                        "Qtd": h['quantidade'],
-                        "EPI": h['ep']['nome'],
-                        "C.A.": h['ep']['ca'],
-                        "Token": h['token'],
-                        "Status": h['status']
-                    } for h in res_del])
-                    
-                    pdf_backup = generate_pdf(
-                        f"BACKUP - {sel_excluir}",
-                        ["Data", "Qtd", "EPI", "C.A.", "Token", "Status"],
-                        df_h_del.values.tolist(),
-                        dict(func_del),
-                        True
-                    )
-                    if pdf_backup:
-                        st.download_button("📥 Baixar Backup", data=pdf_backup, file_name=f"Backup_{sel_excluir}.pdf", mime="application/pdf", use_container_width=True)
-                
-                if st.button("🗑️ Excluir Definitivamente", type="primary", use_container_width=True):
+                pdf_backup = generate_pdf(
+                    f"BACKUP - {sel_excluir}",
+                    ["Data", "Qtd", "EPI", "C.A.", "Token", "Status"],
+                    df_h_del.values.tolist(),
+                    dict(func_del),
+                    True
+                )
+                if pdf_backup:
+                    st.download_button("📥 Baixar Backup", data=pdf_backup, file_name=f"Backup_{sel_excluir}.pdf", mime="application/pdf", use_container_width=True)
+            
+            if st.button("🗑️ Excluir Definitivamente", type="primary", use_container_width=True):
+                try:
+                    supabase.table("entregas").delete().eq("id_func", int(func_del['id'])).execute()
+                    supabase.table("oficiais").delete().eq("id", int(func_del['id'])).execute()
+                    st.success(f"✅ {func_del['nome']} removido com sucesso.")
+                    st.cache_data.clear()
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+    
+    with tab3:
+        st.subheader("Lista de Colaboradores")
+        df_oficiais = load_data("oficiais", "nome")
+        
+        if not df_oficiais.empty:
+            df_view = df_oficiais.copy()
+            df_view['Admissão'] = df_view['data_admissao'].apply(format_br)
+            cols_to_show = ['nome', 'matricula', 'Admissão', 'setor', 'funcao']
+            if 'vinculo' in df_view.columns:
+                df_view['vinculo'] = df_view['vinculo'].fillna("N/A")
+                cols_to_show.append('vinculo')
+            st.dataframe(df_view[cols_to_show], use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum colaborador cadastrado.")
+
+    with tab4:
+        st.subheader("Cadastrar Novo Vínculo")
+        with st.form("add_v"):
+            nv = st.text_input("Nome do Vínculo (Ex: CLT, COOPERADO, TERCEIRIZADO)").upper()
+            if st.form_submit_button("➕ Adicionar Vínculo", use_container_width=True):
+                if nv:
                     try:
-                        supabase.table("entregas").delete().eq("id_func", int(func_del['id'])).execute()
-                        supabase.table("oficiais").delete().eq("id", int(func_del['id'])).execute()
-                        st.success(f"✅ {func_del['nome']} removido com sucesso.")
+                        supabase.table("vinculos").insert({"nome": nv}).execute()
+                        st.success(f"✅ '{nv}' adicionado!")
                         st.cache_data.clear()
-                        time.sleep(2)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
+                        st.error(f"⚠️ Erro: Certifique-se de ter rodado o comando SQL no Supabase para criar a tabela 'vinculos'. Detalhes: {extrair_erro_db(e)}")
         
-        with tab3:
-            st.subheader("Lista de Colaboradores")
-            df_oficiais = load_data("oficiais", "nome")
-            
-            if not df_oficiais.empty:
-                df_view = df_oficiais.copy()
-                df_view['Admissão'] = df_view['data_admissao'].apply(format_br)
-                st.dataframe(df_view[['nome', 'matricula', 'Admissão', 'setor', 'funcao']], use_container_width=True, hide_index=True)
-            else:
-                st.info("Nenhum colaborador cadastrado.")
+        st.divider()
+        st.subheader("Vínculos Cadastrados")
+        if not df_vinculos.empty:
+            st.dataframe(df_vinculos[['nome']], use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum vínculo cadastrado.")
 
 # ============================================================================
 # 4. 🎖️ FUNÇÕES
@@ -1031,6 +1049,9 @@ elif menu == "📄 Ficha Individual":
             st.markdown(f"**Colaborador:** {f_info['nome']}")
             st.markdown(f"**Matrícula:** {f_info['matricula']}")
             st.markdown(f"**Setor:** {f_info['setor']}")
+            vinc = f_info.get('vinculo')
+            vinc_str = str(vinc) if vinc and pd.notna(vinc) and str(vinc).lower() != 'nan' else 'N/A'
+            st.markdown(f"**Vínculo:** {vinc_str}")
             st.markdown(f"**Admissão:** {format_br(f_info.get('data_admissao'))}")
         
         st.divider()
