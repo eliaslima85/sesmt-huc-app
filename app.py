@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.3 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.4 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -143,7 +143,6 @@ if "confirmar" in st.query_params:
                             supabase.storage.from_("assinaturas").upload(path=path, file=buffered.getvalue(), file_options={"content-type": "image/png"})
                             url = supabase.storage.from_("assinaturas").get_public_url(path)
                             
-                            # Try/Catch interno para proteger contra cache de esquema do banco de dados (PGRST204)
                             try:
                                 supabase.table("oficiais").update({"assinatura_url": url}).eq("id", func['id']).execute()
                             except Exception as db_col_err:
@@ -168,10 +167,10 @@ if "confirmar" in st.query_params:
     st.stop()
 
 # ============================================================================
-# GERADOR DE PDF PROFISSIONAL (CNPJ NO TOPO)
+# GERADOR DE PDF PROFISSIONAL (CNPJ NO TOPO E POSICIONAMENTO DA ASSINATURA)
 # ============================================================================
 
-def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False):
+def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, custom_text=None):
     from fpdf import FPDF
     try:
         pdf = FPDF(orientation='L', unit='mm', format='A4')
@@ -217,15 +216,24 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False):
                 pdf.cell(col_widths[i], 8, clean_str(str(val)), border=1, ln=(1 if i == len(row)-1 else 0), align=('L' if i==2 and is_ficha else 'C'))
             
         if is_ficha:
+            # Imprime o texto de declaração dinâmico (Request 1)
             pdf.ln(10); pdf.set_font("Arial", 'I', 8)
-            pdf.multi_cell(0, 4, clean_str(get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")))
+            texto_render = custom_text if custom_text else get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")
+            pdf.multi_cell(0, 4, clean_str(texto_render))
+            
+            # Bloco Oficial de Assinatura (Request 2 - Alinhamento rigoroso abaixo da frase)
+            pdf.ln(8)
+            pdf.set_font("Arial", 'B', 9)
+            pdf.cell(0, 5, clean_str("ASSINATURA ELETRONICA DO FUNCIONARIO"), border=0, ln=1)
+            pdf.ln(2)
             
             if func_info.get('assinatura_url'):
                 try:
                     r = requests.get(func_info['assinatura_url'], timeout=5)
                     img = Image.open(BytesIO(r.content)).convert("RGB")
                     img.save("temp_sig.jpg")
-                    pdf.image("temp_sig.jpg", x=20, y=pdf.get_y()+2, w=40)
+                    pdf.image("temp_sig.jpg", x=20, y=pdf.get_y(), w=40)
+                    pdf.ln(15) # Avança o cursor para layout limpo
                 except: pass
 
         return pdf.output(dest='S').encode('latin-1')
@@ -261,7 +269,7 @@ menu = st.sidebar.radio("SESMT MENU", [
 if st.sidebar.button("Sair do Sistema"): st.session_state.logado = False; st.rerun()
 
 # ----------------------------------------------------------------------------
-# 1. 📊 PAINEL (MENSAGEM COM NOME E QUANTIDADE NO REENVIO)
+# 1. 📊 PAINEL
 # ----------------------------------------------------------------------------
 if menu == "📊 Painel":
     st.title("📊 Indicadores e Controles Operacionais")
@@ -285,14 +293,13 @@ if menu == "📊 Painel":
                 col1, col2 = st.columns([3, 1])
                 col1.write(f"⏳ **{f['nome']}** | {p['quantidade']}x {epi_nome} | Token: `{p['token']}`")
                 link = f"{get_cfg('url_sistema')}/?confirmar={p['token']}"
-                # Alteração: Mensagem descritiva detalhada no Painel
                 msg = f"🛡️ *SESMT HUC*\nOlá *{f['nome']}*,\nVocê possui uma entrega pendente de confirmação para o EPI: *{p['quantidade']}x {epi_nome}*. Acesse o link seguro para assinar digitalmente: {link}"
                 with col2: abrir_whatsapp(f['whatsapp'], msg)
     else:
         st.success("Nenhuma assinatura pendente no momento!")
 
 # ----------------------------------------------------------------------------
-# 2. 🚀 REGISTRAR ENTREGA (MENSAGEM COM NOME E QUANTIDADE NO ATO)
+# 2. 🚀 REGISTRAR ENTREGA
 # ----------------------------------------------------------------------------
 elif menu == "🚀 Registrar Entrega":
     st.title("🚀 Registrar Entrega de Equipamentos")
@@ -316,7 +323,6 @@ elif menu == "🚀 Registrar Entrega":
                 
                 st.success(f"✅ Entrega registrada com sucesso! Token gerado: `{tk}`")
                 link = f"{get_cfg('url_sistema')}/?confirmar={tk}"
-                # Alteração: Mensagem descritiva detalhada com Nome e Quantidade no Registro
                 msg = f"🛡️ *SESMT HUC*\nOlá *{rf['nome']}*,\nConfirme o recebimento de *{q}x {e}* acessando o link seguro de assinatura: {link}"
                 abrir_whatsapp(rf['whatsapp'], msg)
 
@@ -402,7 +408,7 @@ elif menu == "📦 Catálogo EPI":
             st.dataframe(df_ep_view[['nome', 'ca', 'validade']], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
-# 6. 📄 FICHA INDIVIDUAL
+# 6. 📄 FICHA INDIVIDUAL (CAMPOS DE TEXTO DINÂMICOS ADICIONADOS)
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha Individual de Controle de EPI (NR-06)")
@@ -417,6 +423,12 @@ elif menu == "📄 Ficha Individual":
         else:
             st.info("ℹ️ Este funcionário não realizou nenhuma assinatura eletrônica. A coleta será feita no primeiro link do WhatsApp enviado.")
 
+        # --- NOVO BLOCO: ENTRADA DE TEXTO CUSTOMIZADO PARA A FICHA (Request 1) ---
+        st.write("---")
+        termo_padrao = get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")
+        texto_ficha = st.text_area("📝 Ajustar Texto de Declaração / Termo de Responsabilidade da Ficha", value=termo_padrao, height=100, help="Escreva o texto jurídico que sairá impresso no corpo desta ficha individual em PDF.")
+        st.write("---")
+
         res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).order("data_entrega", desc=True).execute().data
         if res:
             df_h = pd.DataFrame([{"Data/Hora": format_br(h['data_entrega'], True), "Qtd": h['quantidade'], "EPI": h['ep']['nome'], "C.A.": h['ep']['ca'], "Token": h['token'], "Status": h['status']} for h in res])
@@ -429,10 +441,11 @@ elif menu == "📄 Ficha Individual":
             
             col_b1, col_b2 = st.columns(2)
             
-            pdf_c = generate_pdf("FICHA DE EPI - CICLO ATUAL (20 ITENS MAX)", headers, df_h.head(20).values.tolist(), dict(f_info), True)
+            # Repasse do texto customizado para as funções de PDF
+            pdf_c = generate_pdf("FICHA DE EPI - CICLO ATUAL (20 ITENS MAX)", headers, df_h.head(20).values.tolist(), dict(f_info), True, custom_text=texto_ficha)
             if pdf_c: col_b1.download_button("📥 BAIXAR CICLO ATUAL (Últimos 20)", data=pdf_c, file_name=f"Ciclo_20_{sel}.pdf", mime="application/pdf", use_container_width=True)
             
-            pdf_g = generate_pdf("FICHA DE EPI - HISTORICO COMPLETO", headers, df_h.values.tolist(), dict(f_info), True)
+            pdf_g = generate_pdf("FICHA DE EPI - HISTORICO COMPLETO", headers, df_h.values.tolist(), dict(f_info), True, custom_text=texto_ficha)
             if pdf_g: col_b2.download_button("📥 BAIXAR HISTÓRICO GERAL (Completo)", data=pdf_g, file_name=f"Ficha_Geral_{sel}.pdf", mime="application/pdf", use_container_width=True)
         else:
             st.info("Nenhum EPI foi fornecido a este colaborador ainda.")
@@ -469,7 +482,7 @@ elif menu == "📈 Balanço Semanal":
 elif menu == "⚙️ Ajustes":
     st.title("⚙️ Configurações Gerais do Sistema")
     
-    st.subheader("🌐 Link de Produção do Sistema")
+    st.subheader("🌐 Link de Production do Sistema")
     url = st.text_input("URL Pública do Aplicativo (Ex: https://seu-app.streamlit.app)", get_cfg("url_sistema"))
     if st.button("Salvar URL do Sistema", use_container_width=True):
         supabase.table("configuracoes").upsert({"chave":"url_sistema", "valor":url}, on_conflict="chave").execute()
