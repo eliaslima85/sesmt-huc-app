@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.6 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.7 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -66,15 +66,18 @@ STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
 def clean_str(text):
     if not text: return ""
     text_str = str(text).replace('✅', '!').replace('⏳', '...')
-    # Correção: Codifica diretamente para latin-1 mantendo acentuações nativas portuguesas como ~ e ç
+    # Codifica diretamente para latin-1 mantendo acentuações nativas portuguesas como ~ e ç
     return text_str.encode('latin-1', 'replace').decode('latin-1')
 
 def format_br(date_str, include_time=False):
     if not date_str: return "N/A"
     try:
         d_str = str(date_str).strip()
-        if "/" in d_str: return d_str
-        clean_date = d_str.replace('Z', '').split('+')[0]
+        # Se já for DD/MM/YYYY, preserva a formatação correta
+        if len(d_str) >= 10 and d_str[2] == '/' and d_str[5] == '/': return d_str[:16] if include_time else d_str[:10]
+        
+        # Converte formatos americanos com barras ou traços
+        clean_date = d_str.replace('Z', '').replace('/', '-').split('+')[0]
         if "T" in clean_date or " " in clean_date:
             clean_date = clean_date.replace('T', ' ')
             dt = datetime.strptime(clean_date.split('.')[0], '%Y-%m-%d %H:%M:%S')
@@ -166,7 +169,7 @@ if "confirmar" in st.query_params:
     st.stop()
 
 # ============================================================================
-# GERADOR DE PDF PROFISSIONAL (CNPJ NO TOPO E POSICIONAMENTO DA ASSINATURA)
+# GERADOR DE PDF PROFISSIONAL
 # ============================================================================
 
 def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, custom_text=None):
@@ -325,7 +328,7 @@ elif menu == "🚀 Registrar Entrega":
                 abrir_whatsapp(rf['whatsapp'], msg)
 
 # ----------------------------------------------------------------------------
-# 3. 👥 COLABORADORES (ABAS INCLUÍDAS PARA CADASTRO E GESTÃO/EXCLUSÃO)
+# 3. 👥 COLABORADORES
 # ----------------------------------------------------------------------------
 elif menu == "👥 Colaboradores":
     st.title("👥 Gestão de Prontuários de Colaboradores")
@@ -339,7 +342,8 @@ elif menu == "👥 Colaboradores":
             with st.form("cad_col"):
                 n = st.text_input("Nome Completo").upper()
                 m = st.text_input("Número de Matrícula")
-                da = st.date_input("Data de Admissão", value=datetime.today())
+                # Adicionado format="DD/MM/YYYY" para forçar exibição correta
+                da = st.date_input("Data de Admissão", value=datetime.today(), format="DD/MM/YYYY")
                 s = st.selectbox("Setor de Lotação", ["CME", "SESMT", "UTI", "MANUTENÇÃO", "CENTRO CIRÚRGICO", "EMERGÊNCIA", "PEDIATRIA", "ADMINISTRATIVO"])
                 f = st.selectbox("Função / Cargo", df_funcoes['nome'].tolist())
                 z = st.text_input("WhatsApp (DDD + Número, ex: 85912345678)")
@@ -357,7 +361,6 @@ elif menu == "👥 Colaboradores":
                 
                 st.warning(f"⚠️ **Atenção:** Você selecionou o colaborador **{func_del['nome']}** para exclusão. Esta ação é permanente.")
                 
-                # Buscar entregas para forçar o backup
                 res_del = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(func_del['id'])).order("data_entrega", desc=True).execute().data
                 if res_del:
                     st.info("💡 É estritamente recomendado fazer o download do histórico completo deste colaborador antes de realizar a exclusão.")
@@ -373,9 +376,7 @@ elif menu == "👥 Colaboradores":
 
                 if st.button("🗑️ Deletar Colaborador Definitivamente", type="primary", use_container_width=True):
                     try:
-                        # Deleta primeiro as entregas vinculadas para evitar conflito de chave no banco
                         supabase.table("entregas").delete().eq("id_func", int(func_del['id'])).execute()
-                        # Deleta o funcionário
                         supabase.table("oficiais").delete().eq("id", int(func_del['id'])).execute()
                         st.success(f"✅ O colaborador {func_del['nome']} e todo seu histórico foram removidos do sistema.")
                         st.cache_data.clear()
@@ -384,7 +385,6 @@ elif menu == "👥 Colaboradores":
                     except Exception as e:
                         st.error(f"Erro ao tentar excluir: {e}")
 
-        # Tabela global exibida abaixo das abas para sempre ter visão dos dados
         st.write("---")
         df_oficiais = load_data("oficiais", "nome")
         if not df_oficiais.empty:
@@ -417,7 +417,8 @@ elif menu == "📦 Catálogo EPI":
         with st.form("new_epi"):
             n = st.text_input("Nome Técnico do EPI").upper()
             ca = st.text_input("Número do C.A.")
-            v = st.date_input("Data de Validade do C.A.")
+            # Adicionado format="DD/MM/YYYY"
+            v = st.date_input("Data de Validade do C.A.", format="DD/MM/YYYY")
             if st.form_submit_button("Salvar no Catálogo"):
                 if n and ca:
                     supabase.table("ep").insert({"nome":n, "ca":ca, "validade":str(v)}).execute()
@@ -430,7 +431,8 @@ elif menu == "📦 Catálogo EPI":
             with st.form("edit_epi"):
                 en = st.text_input("Nome do EPI", it['nome']).upper()
                 eca = st.text_input("Número do C.A.", it['ca'])
-                ev = st.date_input("Validade do C.A.", datetime.strptime(it['validade'], '%Y-%m-%d') if it['validade'] else datetime.today())
+                # Adicionado format="DD/MM/YYYY"
+                ev = st.date_input("Validade do C.A.", datetime.strptime(it['validade'], '%Y-%m-%d') if it['validade'] else datetime.today(), format="DD/MM/YYYY")
                 c1, c2 = st.columns(2)
                 if c1.form_submit_button("💾 Salvar Alterações"):
                     supabase.table("ep").update({"nome":en, "ca":eca, "validade":str(ev)}).eq("id", int(it['id'])).execute()
@@ -447,7 +449,7 @@ elif menu == "📦 Catálogo EPI":
             st.dataframe(df_ep_view[['nome', 'ca', 'validade']], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
-# 6. 📄 FICHA INDIVIDUAL (COM BOTÃO DE SALVAR TEXTO PADRÃO)
+# 6. 📄 FICHA INDIVIDUAL
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha Individual de Controle de EPI (NR-06)")
