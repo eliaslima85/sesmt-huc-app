@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.4 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.5 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -66,9 +66,8 @@ STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
 def clean_str(text):
     if not text: return ""
     text_str = str(text).replace('✅', '!').replace('⏳', '...')
-    import unicodedata
-    nfd = unicodedata.normalize('NFD', text_str)
-    return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn').encode('latin-1', 'replace').decode('latin-1')
+    # Correção: Codifica diretamente para latin-1 mantendo acentuações nativas portuguesas como ~ e ç
+    return text_str.encode('latin-1', 'replace').decode('latin-1')
 
 def format_br(date_str, include_time=False):
     if not date_str: return "N/A"
@@ -201,6 +200,8 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
             pdf.cell(0, 8, clean_str(f"MATRÍCULA: {func_info['matricula']}"), border=1, ln=1)
             pdf.cell(140, 8, clean_str(f"SETOR: {func_info['setor']}"), border=1)
             pdf.cell(0, 8, clean_str(f"FUNÇÃO: {func_info.get('funcao', 'N/A')}"), border=1, ln=1)
+            # Inclusão: Data de Admissão no Prontuário do PDF
+            pdf.cell(0, 8, clean_str(f"DATA DE ADMISSÃO: {format_br(func_info.get('data_admissao', 'N/A'))}"), border=1, ln=1)
             pdf.ln(5)
 
         # TABELA
@@ -216,12 +217,10 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
                 pdf.cell(col_widths[i], 8, clean_str(str(val)), border=1, ln=(1 if i == len(row)-1 else 0), align=('L' if i==2 and is_ficha else 'C'))
             
         if is_ficha:
-            # Imprime o texto de declaração dinâmico (Request 1)
             pdf.ln(10); pdf.set_font("Arial", 'I', 8)
             texto_render = custom_text if custom_text else get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")
             pdf.multi_cell(0, 4, clean_str(texto_render))
             
-            # Bloco Oficial de Assinatura (Request 2 - Alinhamento rigoroso abaixo da frase)
             pdf.ln(8)
             pdf.set_font("Arial", 'B', 9)
             pdf.cell(0, 5, clean_str("ASSINATURA ELETRONICA DO FUNCIONARIO"), border=0, ln=1)
@@ -233,7 +232,7 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
                     img = Image.open(BytesIO(r.content)).convert("RGB")
                     img.save("temp_sig.jpg")
                     pdf.image("temp_sig.jpg", x=20, y=pdf.get_y(), w=40)
-                    pdf.ln(15) # Avança o cursor para layout limpo
+                    pdf.ln(15)
                 except: pass
 
         return pdf.output(dest='S').encode('latin-1')
@@ -327,7 +326,7 @@ elif menu == "🚀 Registrar Entrega":
                 abrir_whatsapp(rf['whatsapp'], msg)
 
 # ----------------------------------------------------------------------------
-# 3. 👥 COLABORADORES
+# 3. 👥 COLABORADORES (INCLUSÃO DA DATA DE ADMISSÃO)
 # ----------------------------------------------------------------------------
 elif menu == "👥 Colaboradores":
     st.title("👥 Gestão de Prontuários de Colaboradores")
@@ -338,12 +337,15 @@ elif menu == "👥 Colaboradores":
         with st.form("cad_col"):
             n = st.text_input("Nome Completo").upper()
             m = st.text_input("Número de Matrícula")
+            # Inclusão: Input para Data de Admissão
+            da = st.date_input("Data de Admissão", value=datetime.today())
             s = st.selectbox("Setor de Lotação", ["CME", "SESMT", "UTI", "MANUTENÇÃO", "CENTRO CIRÚRGICO", "EMERGÊNCIA", "PEDIATRIA", "ADMINISTRATIVO"])
             f = st.selectbox("Função / Cargo", df_funcoes['nome'].tolist())
             z = st.text_input("WhatsApp (DDD + Número, ex: 85912345678)")
             if st.form_submit_button("Salvar Registro"):
                 if n and m and z:
-                    supabase.table("oficiais").insert({"nome":n, "matricula":m, "setor":s, "funcao":f, "whatsapp":z}).execute()
+                    # Gravação da Data de Admissão no Banco
+                    supabase.table("oficiais").insert({"nome":n, "matricula":m, "data_admissao": str(da), "setor":s, "funcao":f, "whatsapp":z}).execute()
                     st.success("Colaborador cadastrado perfeitamente!"); st.cache_data.clear()
                 else: st.error("Preencha todos os campos obrigatórios.")
         
@@ -353,7 +355,7 @@ elif menu == "👥 Colaboradores":
             for col in ['data_admissao', 'data_consentimento', 'data_criacao']:
                 if col in df_oficiais_view.columns:
                     df_oficiais_view[col] = df_oficiais_view[col].apply(lambda x: format_br(x, True) if 'criacao' in col else format_br(x) if x else "")
-            st.dataframe(df_oficiais_view[['nome', 'matricula', 'setor', 'funcao', 'whatsapp']], use_container_width=True, hide_index=True)
+            st.dataframe(df_oficiais_view[['nome', 'matricula', 'data_admissao', 'setor', 'funcao', 'whatsapp']], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
 # 4. 🎖️ FUNÇÕES
@@ -408,7 +410,7 @@ elif menu == "📦 Catálogo EPI":
             st.dataframe(df_ep_view[['nome', 'ca', 'validade']], use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
-# 6. 📄 FICHA INDIVIDUAL (CAMPOS DE TEXTO DINÂMICOS ADICIONADOS)
+# 6. 📄 FICHA INDIVIDUAL (EXIBIÇÃO COMPLETA DA DATA DE ADMISSÃO)
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha Individual de Controle de EPI (NR-06)")
@@ -423,10 +425,12 @@ elif menu == "📄 Ficha Individual":
         else:
             st.info("ℹ️ Este funcionário não realizou nenhuma assinatura eletrônica. A coleta será feita no primeiro link do WhatsApp enviado.")
 
-        # --- NOVO BLOCO: ENTRADA DE TEXTO CUSTOMIZADO PARA A FICHA (Request 1) ---
+        # Inclusão: Data de Admissão visível na tela da Ficha
+        st.write(f"📅 **Data de Admissão:** {format_br(f_info.get('data_admissao'))}")
+        
         st.write("---")
         termo_padrao = get_cfg("ficha_descricao", "Declaro que recebi os EPIs listados e fui orientado sobre o correto uso e conservacao.")
-        texto_ficha = st.text_area("📝 Ajustar Texto de Declaração / Termo de Responsabilidade da Ficha", value=termo_padrao, height=100, help="Escreva o texto jurídico que sairá impresso no corpo desta ficha individual em PDF.")
+        texto_ficha = st.text_area("📝 Ajustar Texto de Declaração / Termo de Responsabilidade da Ficha", value=termo_padrao, height=100)
         st.write("---")
 
         res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).order("data_entrega", desc=True).execute().data
@@ -441,7 +445,6 @@ elif menu == "📄 Ficha Individual":
             
             col_b1, col_b2 = st.columns(2)
             
-            # Repasse do texto customizado para as funções de PDF
             pdf_c = generate_pdf("FICHA DE EPI - CICLO ATUAL (20 ITENS MAX)", headers, df_h.head(20).values.tolist(), dict(f_info), True, custom_text=texto_ficha)
             if pdf_c: col_b1.download_button("📥 BAIXAR CICLO ATUAL (Últimos 20)", data=pdf_c, file_name=f"Ciclo_20_{sel}.pdf", mime="application/pdf", use_container_width=True)
             
@@ -498,7 +501,7 @@ elif menu == "⚙️ Ajustes":
         if nova_senha:
             if nova_senha == confirma_senha:
                 supabase.table("configuracoes").upsert({"chave": "app_password", "valor": nova_senha}, on_conflict="chave").execute()
-                st.success("🔒 Senha administrativa de acesso atualizada com sucesso na nuvem!")
+                st.success("🔒 Senha administrativa de acesso updated com sucesso na nuvem!")
                 logger.info("🔒 Senha de acesso do aplicativo alterada.")
             else:
                 st.error("❌ As senhas digitadas não coincidem. Tente novamente.")
