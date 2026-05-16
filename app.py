@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v5.1 (STABLE)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v5.5 (ULTRA STABLE)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 """
 
@@ -54,11 +54,18 @@ def clean_str(text):
 def format_br(date_str, include_time=False):
     if not date_str: return "N/A"
     try:
-        if "/" in str(date_str): return str(date_str) # Evita re-formatação
-        clean_date = str(date_str).replace('Z', '').split('+')[0]
-        dt = datetime.fromisoformat(clean_date)
-        return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
-    except: return str(date_str)
+        d_str = str(date_str).strip()
+        if "/" in d_str: return d_str
+        clean_date = d_str.replace('Z', '').split('+')[0]
+        if "T" in clean_date or " " in clean_date:
+            clean_date = clean_date.replace('T', ' ')
+            dt = datetime.strptime(clean_date.split('.')[0], '%Y-%m-%d %H:%M:%S')
+            return dt.strftime('%d/%m/%Y %H:%M') if include_time else dt.strftime('%d/%m/%Y')
+        else:
+            dt = datetime.strptime(clean_date, '%Y-%m-%d')
+            return dt.strftime('%d/%m/%Y')
+    except:
+        return str(date_str)
 
 @st.cache_data(ttl=2)
 def load_data(table, order=None):
@@ -79,6 +86,57 @@ def abrir_whatsapp(numero, mensagem):
     msg_url = urllib.parse.quote(mensagem)
     link = f"https://api.whatsapp.com/send?phone=55{numero}&text={msg_url}"
     st.markdown(f'<a href="{link}" target="_blank"><button style="background-color:#25D366;color:white;border:none;padding:10px;border-radius:5px;width:100%;cursor:pointer;font-weight:bold;">🚀 ENVIAR PARA WHATSAPP</button></a>', unsafe_allow_html=True)
+
+# ============================================================================
+# 📲 CONFIRMAÇÃO DE TOKEN E COLETA DE ASSINATURA (MOBILE/WHATSAPP)
+# ============================================================================
+
+if "confirmar" in st.query_params:
+    tk = st.query_params["confirmar"]
+    if tk:
+        ent_res = supabase.table("entregas").select("*, oficiais(*)").eq("token", tk).execute()
+        if ent_res.data:
+            entrega = ent_res.data[0]
+            func = entrega['oficiais']
+            epi_res = supabase.table("ep").select("nome, ca").eq("id", entrega['id_epi']).execute()
+            epi_nome = epi_res.data[0]['nome'] if epi_res.data else "EPI"
+            
+            st.title("🛡️ Confirmação Digital de EPI - SESMT HUC")
+            st.write(f"**Colaborador:** {func['nome']} | **Matrícula:** {func['matricula']}")
+            st.write(f"**Item Recebido:** {epi_nome} | **Quantidade:** {entrega['quantidade']}")
+            st.divider()
+            
+            # SE NÃO TEM ASSINATURA: OBRIGA A ASSINAR NA PRIMEIRA VEZ
+            if not func.get('assinatura_url'):
+                st.warning("📝 Esta é sua primeira confirmação eletrônica. Por favor, desenhe sua assinatura na tela abaixo para salvá-la em sua ficha definitiva.")
+                canvas_zap = st_canvas(stroke_width=2, stroke_color="#000", background_color="#eee", height=130, width=320, key="canvas_zap")
+                
+                if st.button("✍️ Gravar Assinatura e Confirmar Recebimento", use_container_width=True, type="primary"):
+                    if canvas_zap.image_data is not None:
+                        img = Image.fromarray(canvas_zap.image_data.astype('uint8'), 'RGBA')
+                        buffered = BytesIO(); img.save(buffered, format="PNG")
+                        path = f"assinaturas/sig_{func['id']}.png"
+                        
+                        supabase.storage.from_("assinaturas").upload(path, buffered.getvalue(), file_options={"content-type": "image/png", "upsert": "true"})
+                        url = supabase.storage.from_("assinaturas").get_public_url(path)
+                        
+                        # Atualiza cadastro do funcionário e confirma a entrega atual
+                        supabase.table("oficiais").update({"assinatura_url": url}).eq("id", func['id']).execute()
+                        supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
+                        st.balloons()
+                        st.success("✅ ASSINATURA REGISTRADA E EPI CONFIRMADO COM SUCESSO!")
+                        time.sleep(2); st.query_params.clear(); st.rerun()
+            else:
+                # SE JÁ TEM ASSINATURA: APENAS UM CLIQUE PARA VALIDAR O NOVO TOKEN
+                st.success("✨ Sua assinatura digital master já está vinculada de forma segura ao seu prontuário.")
+                if st.button("👍 Confirmar Recebimento deste EPI", use_container_width=True, type="primary"):
+                    supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
+                    st.balloons()
+                    st.success("🛡️ RECEBIMENTO VALIDADO COM SUCESSO!")
+                    time.sleep(2); st.query_params.clear(); st.rerun()
+        else:
+            st.error("❌ Token inválido ou link de confirmação expirado.")
+    st.stop()
 
 # ============================================================================
 # GERADOR DE PDF PROFISSIONAL (HUC)
@@ -147,16 +205,8 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False):
         return None
 
 # ============================================================================
-# LOGIN E MENUS
+# INTERFACE ADMINISTRATIVA
 # ============================================================================
-
-if 'logado' not in st.session_state: st.session_state.logado = False
-if not st.session_state.logado:
-    st.markdown("<h1 style='text-align:center;'>🛡️ SESMT HUC</h1>", unsafe_allow_html=True)
-    pw = st.text_input("Senha", type="password")
-    if st.button("Entrar"):
-        if pw == get_cfg("app_password", "1234"): st.session_state.logado = True; st.rerun()
-    st.stop()
 
 menu = st.sidebar.radio("SESMT MENU", [
     "📊 Painel", 
@@ -236,7 +286,7 @@ elif menu == "👥 Colaboradores":
             df_oficiais_view = df_oficiais.copy()
             for col in ['data_admissao', 'data_consentimento', 'data_criacao']:
                 if col in df_oficiais_view.columns:
-                    df_oficiais_view[col] = df_oficiais_view[col].apply(lambda x: format_br(x) if x and 'time' not in col else format_br(x, True) if x else "")
+                    df_oficiais_view[col] = df_oficiais_view[col].apply(lambda x: format_br(x, True) if 'criacao' in col or 'consentimento' in col else format_br(x) if x else "")
             st.dataframe(df_oficiais_view, use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
@@ -281,11 +331,11 @@ elif menu == "📦 Catálogo EPI":
             df_ep_view = df_ep.copy()
             for col in ['validade', 'data_criacao', 'data_atualizacao']:
                 if col in df_ep_view.columns:
-                    df_ep_view[col] = df_ep_view[col].apply(lambda x: format_br(x) if x and 'time' not in col and 'criacao' not in col else format_br(x, True) if x else "")
+                    df_ep_view[col] = df_ep_view[col].apply(lambda x: format_br(x, True) if 'criacao' in col or 'atualizacao' in col else format_br(x) if x else "")
             st.dataframe(df_ep_view, use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------------------
-# 6. FICHA INDIVIDUAL (CICLO DE 20 - UPLOAD CORRIGIDO)
+# 6. FICHA INDIVIDUAL (EXIBIÇÃO COM DOWNLOAD DE CICLOS)
 # ----------------------------------------------------------------------------
 elif menu == "📄 Ficha Individual":
     st.title("📄 Ficha Individual")
@@ -294,19 +344,11 @@ elif menu == "📄 Ficha Individual":
         sel = st.selectbox("Colaborador", df_f['nome'])
         f_info = df_f[df_f['nome'] == sel].iloc[0]
         
-        # Assinatura Digital
-        st.subheader("✍️ Assinatura Digital")
-        canvas_result = st_canvas(stroke_width=2, stroke_color="#000", background_color="#eee", height=100, width=300, key="canvas")
-        if st.button("💾 Salvar Assinatura"):
-            if canvas_result.image_data is not None:
-                img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
-                buffered = BytesIO(); img.save(buffered, format="PNG")
-                path = f"assinaturas/sig_{f_info['id']}.png"
-                # CORREÇÃO DA SINTAXE DO UPLOAD AQUI (upsert booleano):
-                supabase.storage.from_("assinaturas").upload(path, buffered.getvalue(), file_options={"content-type": "image/png", "upsert": True})
-                url = supabase.storage.from_("assinaturas").get_public_url(path)
-                supabase.table("oficiais").update({"assinatura_url": url}).eq("id", int(f_info['id'])).execute()
-                st.success("Assinatura Salva com Sucesso na Nuvem!")
+        if f_info.get('assinatura_url'):
+            st.success("✅ Assinatura Digital vinculada ao prontuário do colaborador.")
+            st.image(f_info['assinatura_url'], width=180)
+        else:
+            st.info("ℹ️ Este funcionário ainda não possui uma assinatura salva. Ela será coletada no primeiro link do WhatsApp que ele abrir.")
 
         res = supabase.table("entregas").select("*, ep(*)").eq("id_func", int(f_info['id'])).order("data_entrega", desc=True).execute().data
         if res:
