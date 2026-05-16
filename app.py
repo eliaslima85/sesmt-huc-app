@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.7 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v6.9 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Profissional
 """
@@ -37,7 +37,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Carregamento inteligente de credenciais (Variáveis de ambiente com Fallback Seguro)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://aatkjhtrafuepwzzlrbm.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhdGtqaHRyYWZ1ZXB3enpscmJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2Mjg5MTYsImV4cCI6MjA5NDIwNDkxNn0.65izu7Zhc3kUZrVIRXGvVQ5o-Lhk-7PCK9CMg4zIwuk")
 
@@ -52,7 +51,6 @@ def init_supabase() -> Client:
 
 supabase: Client = init_supabase()
 
-# Padrões Institucionais Oficiais (Rigidamente no Topo do PDF)
 HOSPITAL_NAME = "HOSPITAL UNIVERSITÁRIO DO CEARÁ"
 HOSPITAL_ISGH = "ISGH - INSTITUTO DE SAÚDE E GESTÃO HOSPITALAR"
 CNPJ_ENDERECO = "CNPJ: 05.268.526/0024-67 | AV DOUTOR SILAS MUNGUBA, 1700-ITAPERI | FORTALEZA/CE | CEP: 60.714-242"
@@ -60,23 +58,20 @@ GOVERNO_SUB = "GOVERNO DO ESTADO DO CEARÁ"
 STATUS_ENTREGA = {"PENDENTE": "Pendente ⏳", "CONFIRMADO": "Confirmado ✅"}
 
 # ============================================================================
-# 🛠️ UTILITÁRIOS E FORMATAÇÃO BRASILEIRA
+# 🛠️ UTILITÁRIOS E TRATAMENTO DE ERROS DO SUPABASE
 # ============================================================================
 
 def clean_str(text):
     if not text: return ""
     text_str = str(text).replace('✅', '!').replace('⏳', '...')
-    # Codifica diretamente para latin-1 mantendo acentuações nativas portuguesas como ~ e ç
     return text_str.encode('latin-1', 'replace').decode('latin-1')
 
 def format_br(date_str, include_time=False):
     if not date_str: return "N/A"
     try:
         d_str = str(date_str).strip()
-        # Se já for DD/MM/YYYY, preserva a formatação correta
         if len(d_str) >= 10 and d_str[2] == '/' and d_str[5] == '/': return d_str[:16] if include_time else d_str[:10]
         
-        # Converte formatos americanos com barras ou traços
         clean_date = d_str.replace('Z', '').replace('/', '-').split('+')[0]
         if "T" in clean_date or " " in clean_date:
             clean_date = clean_date.replace('T', ' ')
@@ -87,6 +82,15 @@ def format_br(date_str, include_time=False):
             return dt.strftime('%d/%m/%Y')
     except:
         return str(date_str)
+
+def extrair_erro_db(e):
+    """Extrai a mensagem exata de rejeição do PostgREST/Supabase furando o bloqueio do Streamlit"""
+    try:
+        if hasattr(e, 'message'): return str(e.message)
+        if hasattr(e, 'details'): return str(e.details)
+        if isinstance(e, dict) and 'message' in e: return e['message']
+        return str(e)
+    except: return "Erro desconhecido de transação."
 
 @st.cache_data(ttl=2)
 def load_data(table, order=None):
@@ -148,15 +152,14 @@ if "confirmar" in st.query_params:
                             try:
                                 supabase.table("oficiais").update({"assinatura_url": url}).eq("id", func['id']).execute()
                             except Exception as db_col_err:
-                                logger.error(f"Erro PGRST204 interceptado: {db_col_err}")
-                                st.error("⚠️ Atenção: A coluna 'assinatura_url' não foi encontrada na tabela 'oficiais'. Execute o comando SQL indicado no painel do Supabase.")
+                                st.error(f"⚠️ Atenção (Erro Banco): {extrair_erro_db(db_col_err)}")
                             
                             supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
                             st.balloons()
                             st.success("✅ ASSINATURA REGISTRADA E EPI CONFIRMADO COM SUCESSO!")
                             time.sleep(2); st.query_params.clear(); st.rerun()
                         except Exception as upload_err:
-                            st.error(f"⚠️ Erro de armazenamento na nuvem. Verifique o Bucket público 'assinaturas'. Detalhes: {upload_err}")
+                            st.error(f"⚠️ Erro de armazenamento na nuvem. Detalhes: {upload_err}")
             else:
                 st.success("✨ Sua assinatura digital master já está vinculada de forma segura ao seu prontuário.")
                 if st.button("👍 Confirmar Recebimento deste EPI", use_container_width=True, type="primary"):
@@ -178,7 +181,6 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
         pdf = FPDF(orientation='L', unit='mm', format='A4')
         pdf.add_page()
         
-        # CABEÇALHO INSTITUCIONAL NO TOPO DO DOCUMENTO
         pdf.set_font("Arial", 'B', 14)
         pdf.cell(0, 8, clean_str(HOSPITAL_NAME), border=0, ln=1, align='C')
         pdf.set_font("Arial", 'B', 8)
@@ -189,13 +191,11 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
         pdf.cell(0, 5, clean_str(GOVERNO_SUB), border=0, ln=1, align='C')
         pdf.ln(5)
         
-        # BARRA DE TÍTULO ESCURA
         pdf.set_fill_color(40, 40, 40); pdf.set_text_color(255, 255, 255)
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(0, 10, clean_str(title), border=0, ln=1, fill=True, align='C')
         pdf.ln(4)
         
-        # DADOS DO COLABORADOR
         pdf.set_text_color(0, 0, 0)
         if is_ficha and func_info:
             pdf.set_font("Arial", 'B', 10)
@@ -206,7 +206,6 @@ def generate_pdf(title, headers, data_rows, func_info=None, is_ficha=False, cust
             pdf.cell(0, 8, clean_str(f"DATA DE ADMISSÃO: {format_br(func_info.get('data_admissao', 'N/A'))}"), border=1, ln=1)
             pdf.ln(5)
 
-        # TABELA
         pdf.set_fill_color(230, 230, 230); pdf.set_font("Arial", 'B', 8)
         col_widths = [35, 15, 90, 30, 30, 0] if is_ficha else [80, 110, 0]
         for i, h in enumerate(headers):
@@ -317,15 +316,18 @@ elif menu == "🚀 Registrar Entrega":
                 re = df_ep[df_ep['nome'] == e].iloc[0]
                 tk = str(int(time.time()))[-6:]
                 
-                supabase.table("entregas").insert({
-                    "id_func": int(rf['id']), "id_epi": int(re['id']), 
-                    "token": tk, "quantidade": q, "status": STATUS_ENTREGA["PENDENTE"]
-                }).execute()
-                
-                st.success(f"✅ Entrega registrada com sucesso! Token gerado: `{tk}`")
-                link = f"{get_cfg('url_sistema')}/?confirmar={tk}"
-                msg = f"🛡️ *SESMT HUC*\nOlá *{rf['nome']}*,\nConfirme o recebimento de *{q}x {e}* acessando o link seguro de assinatura: {link}"
-                abrir_whatsapp(rf['whatsapp'], msg)
+                try:
+                    supabase.table("entregas").insert({
+                        "id_func": int(rf['id']), "id_epi": int(re['id']), 
+                        "token": tk, "quantidade": q, "status": STATUS_ENTREGA["PENDENTE"]
+                    }).execute()
+                    
+                    st.success(f"✅ Entrega registrada com sucesso! Token gerado: `{tk}`")
+                    link = f"{get_cfg('url_sistema')}/?confirmar={tk}"
+                    msg = f"🛡️ *SESMT HUC*\nOlá *{rf['nome']}*,\nConfirme o recebimento de *{q}x {e}* acessando o link seguro de assinatura: {link}"
+                    abrir_whatsapp(rf['whatsapp'], msg)
+                except Exception as e_db:
+                    st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e_db)}")
 
 # ----------------------------------------------------------------------------
 # 3. 👥 COLABORADORES
@@ -342,15 +344,17 @@ elif menu == "👥 Colaboradores":
             with st.form("cad_col"):
                 n = st.text_input("Nome Completo").upper()
                 m = st.text_input("Número de Matrícula")
-                # Adicionado format="DD/MM/YYYY" para forçar exibição correta
                 da = st.date_input("Data de Admissão", value=datetime.today(), format="DD/MM/YYYY")
                 s = st.selectbox("Setor de Lotação", ["CME", "SESMT", "UTI", "MANUTENÇÃO", "CENTRO CIRÚRGICO", "EMERGÊNCIA", "PEDIATRIA", "ADMINISTRATIVO"])
                 f = st.selectbox("Função / Cargo", df_funcoes['nome'].tolist())
                 z = st.text_input("WhatsApp (DDD + Número, ex: 85912345678)")
                 if st.form_submit_button("Salvar Registro"):
                     if n and m and z:
-                        supabase.table("oficiais").insert({"nome":n, "matricula":m, "data_admissao": str(da), "setor":s, "funcao":f, "whatsapp":z}).execute()
-                        st.success("Colaborador cadastrado perfeitamente!"); st.cache_data.clear()
+                        try:
+                            supabase.table("oficiais").insert({"nome":n, "matricula":m, "data_admissao": str(da), "setor":s, "funcao":f, "whatsapp":z}).execute()
+                            st.success("Colaborador cadastrado perfeitamente!"); st.cache_data.clear()
+                        except Exception as e_db:
+                            st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e_db)}")
                     else: st.error("Preencha todos os campos obrigatórios.")
         
         with tab2:
@@ -383,7 +387,7 @@ elif menu == "👥 Colaboradores":
                         time.sleep(2)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erro ao tentar excluir: {e}")
+                        st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e)}")
 
         st.write("---")
         df_oficiais = load_data("oficiais", "nome")
@@ -403,12 +407,15 @@ elif menu == "🎖️ Funções":
         nf = st.text_input("Nome da Nova Função (Ex: TÉCNICO DE ENFERMAGEM)").upper()
         if st.form_submit_button("Adicionar ao Sistema"):
             if nf:
-                supabase.table("funcoes").insert({"nome":nf}).execute()
-                st.success(f"Função '{nf}' incluída com sucesso!"); st.cache_data.clear(); st.rerun()
+                try:
+                    supabase.table("funcoes").insert({"nome":nf}).execute()
+                    st.success(f"Função '{nf}' incluída com sucesso!"); st.cache_data.clear(); st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e)}")
     st.dataframe(load_data("funcoes", "nome"), use_container_width=True)
 
 # ----------------------------------------------------------------------------
-# 5. 📦 CATÁLOGO EPI
+# 5. 📦 CATÁLOGO EPI (SISTEMA ANTI-QUEDA ATIVADO NESTE BLOCO)
 # ----------------------------------------------------------------------------
 elif menu == "📦 Catálogo EPI":
     st.title("📦 Catálogo de Equipamentos e Certificados de Aprovação (C.A.)")
@@ -417,12 +424,15 @@ elif menu == "📦 Catálogo EPI":
         with st.form("new_epi"):
             n = st.text_input("Nome Técnico do EPI").upper()
             ca = st.text_input("Número do C.A.")
-            # Adicionado format="DD/MM/YYYY"
             v = st.date_input("Data de Validade do C.A.", format="DD/MM/YYYY")
             if st.form_submit_button("Salvar no Catálogo"):
                 if n and ca:
-                    supabase.table("ep").insert({"nome":n, "ca":ca, "validade":str(v)}).execute()
-                    st.success("EPI integrado ao catálogo!"); st.cache_data.clear(); st.rerun()
+                    try:
+                        # Toda transação de banco de dados agora está blindada contra falhas
+                        supabase.table("ep").insert({"nome":n, "ca":ca, "validade":str(v)}).execute()
+                        st.success("EPI integrado ao catálogo!"); st.cache_data.clear(); st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e)}")
     with t2:
         df_ep = load_data("ep", "nome")
         if not df_ep.empty:
@@ -431,17 +441,20 @@ elif menu == "📦 Catálogo EPI":
             with st.form("edit_epi"):
                 en = st.text_input("Nome do EPI", it['nome']).upper()
                 eca = st.text_input("Número do C.A.", it['ca'])
-                # Adicionado format="DD/MM/YYYY"
                 ev = st.date_input("Validade do C.A.", datetime.strptime(it['validade'], '%Y-%m-%d') if it['validade'] else datetime.today(), format="DD/MM/YYYY")
                 c1, c2 = st.columns(2)
                 if c1.form_submit_button("💾 Salvar Alterações"):
-                    supabase.table("ep").update({"nome":en, "ca":eca, "validade":str(ev)}).eq("id", int(it['id'])).execute()
-                    st.success("EPI Atualizado com Sucesso!"); st.cache_data.clear(); st.rerun()
+                    try:
+                        supabase.table("ep").update({"nome":en, "ca":eca, "validade":str(ev)}).eq("id", int(it['id'])).execute()
+                        st.success("EPI Atualizado com Sucesso!"); st.cache_data.clear(); st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e)}")
                 if c2.form_submit_button("🗑️ Deletar do Catálogo"):
                     try:
                         supabase.table("ep").delete().eq("id", int(it['id'])).execute()
                         st.warning("EPI excluído."); st.cache_data.clear(); st.rerun()
-                    except: st.error("Não é possível deletar um EPI que já possui registros de entrega vinculados.")
+                    except Exception as e: 
+                        st.error(f"Erro: {extrair_erro_db(e)} - Talvez o EPI já possua registros de entrega vinculados.")
             
             df_ep_view = df_ep.copy()
             if 'validade' in df_ep_view.columns:
@@ -471,9 +484,12 @@ elif menu == "📄 Ficha Individual":
         texto_ficha = st.text_area("📝 Ajustar Texto de Declaração / Termo de Responsabilidade da Ficha", value=termo_padrao, height=100)
         
         if st.button("💾 Salvar Texto como Padrão para Todos", use_container_width=True):
-            supabase.table("configuracoes").upsert({"chave":"ficha_descricao", "valor": texto_ficha}, on_conflict="chave").execute()
-            st.success("✅ Texto atualizado e salvo com sucesso na nuvem!")
-            st.cache_data.clear()
+            try:
+                supabase.table("configuracoes").upsert({"chave":"ficha_descricao", "valor": texto_ficha}, on_conflict="chave").execute()
+                st.success("✅ Texto atualizado e salvo com sucesso na nuvem!")
+                st.cache_data.clear()
+            except Exception as e:
+                st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e)}")
             
         st.write("---")
 
@@ -532,8 +548,11 @@ elif menu == "⚙️ Ajustes":
     st.subheader("🌐 Link de Production do Sistema")
     url = st.text_input("URL Pública do Aplicativo (Ex: https://seu-app.streamlit.app)", get_cfg("url_sistema"))
     if st.button("Salvar URL do Sistema", use_container_width=True):
-        supabase.table("configuracoes").upsert({"chave":"url_sistema", "valor":url}, on_conflict="chave").execute()
-        st.success("URL pública do sistema sincronizada com a nuvem!")
+        try:
+            supabase.table("configuracoes").upsert({"chave":"url_sistema", "valor":url}, on_conflict="chave").execute()
+            st.success("URL pública do sistema sincronizada com a nuvem!")
+        except Exception as e:
+            st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e)}")
         
     st.divider()
     
@@ -544,9 +563,12 @@ elif menu == "⚙️ Ajustes":
     if st.button("Gravar Nova Senha", use_container_width=True):
         if nova_senha:
             if nova_senha == confirma_senha:
-                supabase.table("configuracoes").upsert({"chave": "app_password", "valor": nova_senha}, on_conflict="chave").execute()
-                st.success("🔒 Senha administrativa de acesso atualizada com sucesso na nuvem!")
-                logger.info("🔒 Senha de acesso do aplicativo alterada.")
+                try:
+                    supabase.table("configuracoes").upsert({"chave": "app_password", "valor": nova_senha}, on_conflict="chave").execute()
+                    st.success("🔒 Senha administrativa de acesso atualizada com sucesso na nuvem!")
+                    logger.info("🔒 Senha de acesso do aplicativo alterada.")
+                except Exception as e:
+                    st.error(f"⚠️ Rejeição do Supabase: {extrair_erro_db(e)}")
             else:
                 st.error("❌ As senhas digitadas não coincidem. Tente novamente.")
         else:
