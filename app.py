@@ -1,5 +1,5 @@
 """
-🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.8 (PRODUCTION READY)
+🛡️ SESMT HUC - Sistema Digital de Gestão de EPI v7.9 (PRODUCTION READY)
 Hospital Universitário do Ceará - Padrão Oficial ISGH
 📱 Otimizado para Mobile | 🔒 Segurança Enterprise | ✨ UI Premium
 """
@@ -345,6 +345,20 @@ if "confirmar" in st.query_params:
     if tk:
         ent_res = supabase.table("entregas").select("*, oficiais(*)").eq("token", tk).execute()
         if ent_res.data:
+            # TRAVA DE SEGURANÇA: Verifica se já foi confirmado
+            if ent_res.data[0]['status'] == STATUS_ENTREGA["CONFIRMADO"]:
+                st.markdown("""
+                <div style="text-align: center; padding: 4rem 1rem;">
+                    <div style="font-size: 5rem; margin-bottom: 1rem;">✅</div>
+                    <h1 style="color: #27ae60; font-size: 2.2rem; margin-bottom: 1rem;">Tudo Certo!</h1>
+                    <p style="color: #4a4a4a; font-size: 1.2rem; line-height: 1.5;">Este pacote de EPI já foi confirmado e assinado digitalmente.</p>
+                    <div style="margin-top: 2rem; padding: 1rem; background-color: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; display: inline-block;">
+                        <p style="color: #666; font-size: 0.9rem; margin: 0;">Você já pode fechar esta tela.</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                st.stop()
+                
             func = ent_res.data[0]['oficiais']
             
             st.markdown("""
@@ -407,9 +421,8 @@ if "confirmar" in st.query_params:
                             supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
                             
                             st.balloons()
-                            st.success("✅ **ASSINATURA REGISTRADA E PACOTE CONFIRMADO COM SUCESSO!**")
-                            time.sleep(2)
-                            st.query_params.clear()
+                            time.sleep(1.5)
+                            # Removemos o st.query_params.clear() para ele recarregar na mesma página e cair na tela verde de sucesso!
                             st.rerun()
                         except Exception as e:
                             st.error(f"⚠️ Erro: {extrair_erro_db(e)}")
@@ -422,9 +435,8 @@ if "confirmar" in st.query_params:
                 if st.button("👍 Confirmar Recebimento", use_container_width=True, type="primary"):
                     supabase.table("entregas").update({"status": STATUS_ENTREGA["CONFIRMADO"]}).eq("token", tk).execute()
                     st.balloons()
-                    st.success("🛡️ **RECEBIMENTO VALIDADO COM SUCESSO!**")
-                    time.sleep(2)
-                    st.query_params.clear()
+                    time.sleep(1.5)
+                    # Removemos o st.query_params.clear() para ele recarregar na mesma página e cair na tela verde de sucesso!
                     st.rerun()
         else:
             st.error("❌ Token inválido ou link de confirmação expirado.")
